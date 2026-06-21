@@ -68,9 +68,12 @@ async function tickMonitor(){
 }
 function renderMonitor(st){
   const P=st.plan, px=st.prices, dir=P.side==='long'?1:-1, sideCn=P.side==='long'?'做多':'做空';
-  document.getElementById('h1').textContent=`实时策略运行 · ${sideCn}涨幅榜`;
+  const poolTxt = P.pool==='quality'
+    ? `质量池(上市≥${P.quality_age_months}月·成交额>${(P.quality_vol/1e4).toFixed(0)}万)`
+    : '涨幅榜';
+  document.getElementById('h1').textContent=`实时策略运行 · ${sideCn}${poolTxt}`;
   document.getElementById('sub').textContent=
-    `${sideCn} top${P.top} · 止损${(P.sl*100).toFixed(0)}% · 止盈${(P.tp*100).toFixed(0)}% · 每仓${fmt(P.notional_each)}U · 冻结于 ${P.frozen_at?hhmmss(P.frozen_at):'—'} · 快照#${st.snapshot_id||'—'}`;
+    `${sideCn} top${P.top} · ${poolTxt} · 止损${(P.sl*100).toFixed(0)}% · 止盈${(P.tp*100).toFixed(0)}% · 每仓${fmt(P.notional_each)}U · 冻结于 ${P.frozen_at?hhmmss(P.frozen_at):'—'} · 快照#${st.snapshot_id||'—'}`;
   document.getElementById('upd').textContent='更新 '+hhmmss(st.now);
 
   const s=st.summary||{total_pnl:0,total_notional:0,hit:0};

@@ -44,6 +44,9 @@ class MonitorConfig:
     min_quote_volume: float = 1_000_000.0
     universe: int = 150           # 1h 榜刷新的标的池大小
     sample_sec: int = 60          # 浮盈采样周期
+    quality_pool: bool = False    # 质量池筛选: 上市≥N月 + 成交额>X
+    quality_age_months: int = 6   # 质量池: 上市时长门槛(月)
+    quality_vol: float = 10_000_000.0   # 质量池: 24h成交额门槛
 
     @classmethod
     def from_env(cls, env=os.environ) -> "MonitorConfig":
@@ -58,4 +61,7 @@ class MonitorConfig:
             min_quote_volume=float(g("MON_MIN_QVOL", "1000000")),
             universe=int(g("MON_UNIVERSE", "150")),
             sample_sec=int(g("SAMPLE_SEC", "60")),
+            quality_pool=g("MON_QUALITY", "0") in ("1", "true", "True", "yes"),
+            quality_age_months=int(g("MON_QUALITY_AGE_MONTHS", "6")),
+            quality_vol=float(g("MON_QUALITY_VOL", "10000000")),
         )

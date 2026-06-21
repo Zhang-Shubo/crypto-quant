@@ -51,10 +51,28 @@ class Monitor:
         con.close()
 
     # ---------- 计划 (冻结快照) ----------
+    def _quality_allowed(self, prec) -> set:
+        """质量池可交易集: 在 prec(可交易) 基础上, 仅保留上市≥quality_age_months月的标的。
+        成交额门槛由 pick_gainers 的 min_quote_volume 处理。"""
+        from ..exchange import onboard_dates
+        from ..config import DAY_MS
+        onboard = onboard_dates()
+        now = int(time.time() * 1000)
+        cutoff = self.cfg.quality_age_months * 30 * DAY_MS
+        return {s for s in prec if onboard.get(s, 0) and (now - onboard[s]) >= cutoff}
+
     def build_plan(self) -> dict:
         cfg, prec = self.cfg, self.get_prec()
-        picks = pick_gainers(self.client.ticker_24hr(), cfg.top, allowed=prec,
-                             min_quote_volume=cfg.min_quote_volume)
+        if cfg.quality_pool:
+            allowed = self._quality_allowed(prec)
+            min_qv = cfg.quality_vol
+            pool = "quality"
+        else:
+            allowed = prec
+            min_qv = cfg.min_quote_volume
+            pool = "gainers"
+        picks = pick_gainers(self.client.ticker_24hr(), cfg.top, allowed=allowed,
+                             min_quote_volume=min_qv)
         notional = cfg.capital / cfg.top if picks else 0.0
         pos = []
         for g in picks:
@@ -68,6 +86,8 @@ class Monitor:
                         "reason": None, "exit_ts": None})
         return {"side": cfg.side, "capital": cfg.capital, "sl": cfg.stop_loss,
                 "tp": cfg.take_profit, "top": cfg.top, "notional_each": round(notional, 2),
+                "pool": pool, "quality_age_months": cfg.quality_age_months if cfg.quality_pool else None,
+                "quality_vol": cfg.quality_vol if cfg.quality_pool else None,
                 "frozen_at": int(time.time() * 1000), "positions": pos}
 
     # ---------- 盈亏 ----------

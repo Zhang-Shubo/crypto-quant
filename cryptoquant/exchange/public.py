@@ -64,6 +64,13 @@ def select_universe(n: int) -> list[str]:
     return [t["symbol"] for t in rows[:n]]
 
 
+def onboard_dates() -> dict:
+    """{symbol: onboardDate_ms} 合约上市时间, 取自 exchangeInfo。
+    用于"上市≥N月"质量过滤 (点时正确, 不含前视)。"""
+    info = get_json(FAPI_BASE, "/fapi/v1/exchangeInfo")
+    return {s["symbol"]: int(s.get("onboardDate", 0)) for s in info["symbols"]}
+
+
 def fetch_klines(symbol: str, start_ms: int, end_ms: int, interval: str = "1h") -> dict:
     """分页抓 [start, end) 区间 K 线, 返回 {openTime: (close, high, low, quoteVol)}。"""
     out: dict[int, tuple] = {}

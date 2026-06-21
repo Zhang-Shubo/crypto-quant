@@ -32,7 +32,8 @@ import sys
 import time
 
 from ..config import HOUR_MS, DAY_MS, RUNS_DIR, LAST_RUN_PATH
-from ..exchange import select_universe, fetch_klines, fetch_funding, funding_between
+from ..exchange import (select_universe, onboard_dates, fetch_klines,
+                        fetch_funding, funding_between)
 
 # 预设矩阵: (side, stop_loss, take_profit)
 PRESETS = [
@@ -44,32 +45,38 @@ PRESETS = [
 
 
 # ----------------------------- 数据抓取 -----------------------------
-def load_data(days, candidates, hours):
-    """抓一次候选集数据 (成交额前 candidates), 供多个配置共用。"""
+def load_data(days, candidates, hours, warmup_days=0):
+    """抓一次候选集数据 (成交额前 candidates), 供多个配置共用。
+
+    warmup_days: 额外多抓的预热历史 (质量池的 7日中位数成交额需要预热);
+    交易窗口(rebal_times)仍只覆盖最近 days 天, warmup_days=0 时与旧行为完全一致。
+    """
     end_ms = int(time.time() * 1000) // HOUR_MS * HOUR_MS
-    start_ms = end_ms - days * DAY_MS
+    fetch_start = end_ms - (days + warmup_days) * DAY_MS
+    trade_start = end_ms - days * DAY_MS
     hold_ms = hours * HOUR_MS
     print(f"[数据] 候选集(成交额前 {candidates})...", file=sys.stderr)
     uni = select_universe(candidates)   # 按当前成交额降序
-    print(f"[数据] 抓 {days}天 1h OHLCV + 资金费率 ({len(uni)} 标的)...", file=sys.stderr)
+    print(f"[数据] 抓 {days + warmup_days}天 1h OHLCV + 资金费率 ({len(uni)} 标的)...", file=sys.stderr)
     prices, funding = {}, {}
     for i, sym in enumerate(uni, 1):
         try:
-            kl = fetch_klines(sym, start_ms, end_ms)
+            kl = fetch_klines(sym, fetch_start, end_ms)
             if len(kl) < 30:
                 continue
             prices[sym] = kl
-            funding[sym] = fetch_funding(sym, start_ms, end_ms)
+            funding[sym] = fetch_funding(sym, fetch_start, end_ms)
         except Exception as e:
             print(f"      ! {sym} 跳过: {e}", file=sys.stderr)
         if i % 50 == 0:
             print(f"      {i}/{len(uni)}", file=sys.stderr)
         time.sleep(0.04)
     syms = [s for s in uni if s in prices]   # 候选(成交额降序)
-    rebal_times = list(range(start_ms + DAY_MS, end_ms - hold_ms + 1, hold_ms))
+    rebal_times = list(range(trade_start + DAY_MS, end_ms - hold_ms + 1, hold_ms))
+    onboard = onboard_dates()
     print(f"[数据] 候选有效 {len(syms)}, 调仓周期 {len(rebal_times)}", file=sys.stderr)
-    return {"syms": syms, "prices": prices, "funding": funding,
-            "rebal_times": rebal_times, "start_ms": start_ms, "end_ms": end_ms,
+    return {"syms": syms, "prices": prices, "funding": funding, "onboard": onboard,
+            "rebal_times": rebal_times, "start_ms": fetch_start, "end_ms": end_ms,
             "days": days, "candidates_requested": candidates, "hours": hours}
 
 
@@ -90,6 +97,45 @@ def dynamic_universe(data, nsel):
                 vs.append((s, tv))
         vs.sort(key=lambda r: r[1], reverse=True)
         out[t] = [s for s, _ in vs[:nsel]]
+    return out
+
+
+def quality_universe(data, vol_floor=1e7, age_days=180, med_days=7):
+    """质量池: 每个调仓点选满足
+        ① 上市≥age_days天 (onboardDate, 点时正确)
+        ② 近7日「24h成交额」中位数 > vol_floor (抗单日拉盘)
+      的全部标的, 每日刷新。返回 {t:[symbols]}。
+
+    甜区参数(扫描所得): vol_floor=1000万, age_days=180(6月)。剔除新币 pump-and-dump,
+    避免在抛物线顶部接盘; 但过滤过头(≥12月 或 >5000万)会把趋势源头也滤掉。
+    需 load_data(..., warmup_days≥8) 提供 7 日中位数所需预热。
+    """
+    prices, rebal = data["prices"], data["rebal_times"]
+    onboard = data.get("onboard", {})
+
+    def daily_vol(bars, t):
+        v = 0.0
+        for k in range(24):
+            x = bars.get(t - k * HOUR_MS)
+            if x:
+                v += x[3]
+        return v
+
+    day_cache, out = {}, {}
+    for t in rebal:
+        d = (t // DAY_MS) * DAY_MS
+        if d not in day_cache:
+            sel = []
+            for s, bars in prices.items():
+                ob = onboard.get(s, 0)
+                if ob == 0 or (d - ob) < age_days * DAY_MS:        # 上市不足
+                    continue
+                dv = [daily_vol(bars, d - j * DAY_MS) for j in range(med_days)]
+                dv = [x for x in dv if x > 0]
+                if len(dv) >= med_days and statistics.median(dv) > vol_floor:
+                    sel.append(s)
+            day_cache[d] = sel
+        out[t] = [s for s in day_cache[d] if prices[s].get(t)]
     return out
 
 
@@ -119,8 +165,9 @@ def simulate_hold(bars, t, entry, hold_ms, sl_level, tp_level, side):
 
 
 def run_config(data, side, top, stop_loss, take_profit, fee, capital,
-               nsel=120, dyn_univ=None):
-    """dyn_univ: 时点动态池 {t:[symbols]} (来自 dynamic_universe); None=固定池(候选前 nsel)。"""
+               nsel=120, dyn_univ=None, mode=None):
+    """dyn_univ: 选池 {t:[symbols]}; None=固定池(候选前 nsel)。
+    mode: 'dynamic'|'fixed'|'quality' (None 时从 dyn_univ 推断), 影响 id/标签/meta。"""
     syms, prices, funding = data["syms"], data["prices"], data["funding"]
     rebal_times, hours = data["rebal_times"], data["hours"]
     hold_ms = hours * HOUR_MS
@@ -217,20 +264,28 @@ def run_config(data, side, top, stop_loss, take_profit, fee, capital,
     win_rate = wins / n_eff if n_eff else 0.0
     n_legs = sum(reason_count.values())
     side_cn = "做多" if side == "long" else "做空"
-    umode = "动态池" if is_dynamic else "固定池"
+    if mode is None:
+        mode = "dynamic" if is_dynamic else "fixed"
+    umode = {"dynamic": "动态池", "fixed": "固定池", "quality": "质量池"}.get(mode, "动态池")
+    suffix = "_q" if mode == "quality" else ""   # 质量池单独 id 共存对比; 动态/固定共用基础 id
+    if is_dynamic:
+        sizes = [len(v) for v in dyn_univ.values()]
+        uni_eff = round(sum(sizes) / len(sizes)) if sizes else nsel
+    else:
+        uni_eff = nsel
 
     return {
         "meta": {
-            "id": run_id(side, stop_loss, take_profit),
-            "label": f"{side_cn} · 止损{stop_loss:.0%}/止盈{take_profit:.0%}",
+            "id": run_id(side, stop_loss, take_profit) + suffix,
+            "label": f"{side_cn} · 止损{stop_loss:.0%}/止盈{take_profit:.0%} · {umode}",
             "strategy": f"每{hours}h{side_cn}24h涨幅榜前{top} · 止损{stop_loss:.0%}/止盈{take_profit:.0%} · {umode}",
             "side": side, "generated_at": int(time.time() * 1000),
             "days": data["days"], "rebalance_hours": hours, "top_n": top,
             "stop_loss": stop_loss, "take_profit": take_profit,
-            "universe_mode": "dynamic" if is_dynamic else "fixed",
+            "universe_mode": mode,
             "candidates_effective": len(syms),
             "universe_requested": nsel,
-            "universe_effective": nsel, "fee_rate": fee, "start_equity": cap,
+            "universe_effective": uni_eff, "fee_rate": fee, "start_equity": cap,
             "period_start": rebal_times[0] if rebal_times else data["start_ms"],
             "period_end": rebal_times[-1] if rebal_times else data["end_ms"],
         },

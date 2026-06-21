@@ -15,8 +15,9 @@
   .khead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
   .ksym{font-size:18px;font-weight:700;font-family:var(--mono)}
   .kprice{font-size:18px;font-family:var(--mono)}
-  #kchart{height:360px;width:100%}
-  .kempty{height:360px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px}
+  /* 高度按视口自适应: 小屏不挤、大屏更高, 配合 autoSize 宽度自适应 */
+  #kchart{height:clamp(300px,52vh,580px);width:100%}
+  .kempty{height:clamp(300px,52vh,580px);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:13px}
   .ivals{display:flex;gap:5px}
   .ivals button{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:6px;
     font-size:12px;padding:3px 10px;cursor:pointer;font-family:var(--mono)}
@@ -99,9 +100,12 @@ function ensureChart(){
   chart=LightweightCharts.createChart(document.getElementById('kchart'),{
     layout:{background:{color:'transparent'},textColor:'#7d8aa0'},
     grid:{vertLines:{color:'#1a2230'},horzLines:{color:'#1a2230'}},
-    rightPriceScale:{borderColor:'#1e2937'},timeScale:{borderColor:'#1e2937',timeVisible:true},
-    crosshair:{mode:0},autoSize:true,height:360,
+    rightPriceScale:{borderColor:'#1e2937'},
+    timeScale:{borderColor:'#1e2937',timeVisible:true,rightOffset:4,barSpacing:6},
+    crosshair:{mode:0},autoSize:true,           // autoSize: 用 ResizeObserver 跟随容器宽高变化
   });
+  // 兜底: 窗口尺寸/DPR 变化时主动重排 (部分环境 ResizeObserver 不触发)
+  window.addEventListener('resize',()=>{ if(chart){const el=document.getElementById('kchart');chart.resize(el.clientWidth,el.clientHeight);} });
   series=chart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',
     borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});
 }

@@ -82,6 +82,15 @@ class BinanceFutures:
     def exchange_info(self):
         return self._request("GET", "/fapi/v1/exchangeInfo")
 
+    def klines(self, symbol, interval="1h", limit=200):
+        """K线, 返回 Binance 原始数组 [[openTime,O,H,L,C,vol,closeTime,quoteVol,...]]。"""
+        return self._request("GET", "/fapi/v1/klines",
+                             {"symbol": symbol, "interval": interval, "limit": limit})
+
+    def premium_index(self):
+        """全市场标记价 / 资金费, 返回 [{symbol, markPrice, lastFundingRate, ...}]。"""
+        return self._request("GET", "/fapi/v1/premiumIndex")
+
     def precision_map(self) -> dict:
         """{symbol: {qty_prec, price_prec, min_notional}}。"""
         info = self.exchange_info()

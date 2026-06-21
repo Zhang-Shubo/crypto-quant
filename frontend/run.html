@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>回测明细 · crypto-quant</title>
+<link rel="stylesheet" href="./app.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -64,8 +65,14 @@
 </style>
 </head>
 <body>
+<nav class="topnav">
+  <span class="brand"><b>⚡</b> crypto-quant</span>
+  <a href="index.html">市场</a>
+  <a href="backtest.html" class="active">回测</a>
+  <a href="live.html">实时</a>
+</nav>
 <div class="wrap">
-  <a class="back" href="index.html">← 全部策略</a>
+  <a class="back" href="backtest.html">← 全部策略</a>
   <header>
     <h1 id="h1">回测明细</h1>
     <span class="tag" id="tagStrat">strategy</span>

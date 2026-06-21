@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>做空涨幅榜 · 回测可视化</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0e14; --panel:#111722; --panel2:#0d1320; --line:#1e2937;
+    --txt:#d6e0ee; --dim:#7d8aa0; --accent:#3fb6ff;
+    --up:#22c55e; --down:#ef4444; --gold:#f5b94a; --violet:#a78bfa;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 60px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+  h1{font-size:21px;font-weight:650;margin:0;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:13px}
+  .tag{font-family:var(--mono);font-size:11px;color:var(--accent);
+    border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--panel2)}
+  .verdict{margin:16px 0 22px;padding:13px 16px;border-radius:10px;font-size:14px;
+    border:1px solid var(--line);background:linear-gradient(90deg,rgba(239,68,68,.10),transparent)}
+  .verdict b{color:var(--down)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+  .card .k{color:var(--dim);font-size:12px;margin-bottom:5px}
+  .card .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.3px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px 18px 14px;margin-bottom:18px}
+  .panel h2{font-size:13px;font-weight:600;color:var(--dim);margin:0 0 14px;text-transform:uppercase;letter-spacing:.6px}
+  .chartbox{position:relative;height:300px}
+  .chartbox.sm{height:200px}
+  .pos{color:var(--up)} .neg{color:var(--down)} .mono{font-family:var(--mono)}
+  /* 回放控制 */
+  .controls{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+  button.play{background:var(--accent);color:#04121f;border:none;border-radius:8px;
+    font-size:13px;font-weight:650;padding:8px 16px;cursor:pointer;min-width:74px}
+  button.play.playing{background:var(--gold)}
+  input[type=range]{flex:1;accent-color:var(--accent);height:4px}
+  .cyc-meta{display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px;font-size:13px}
+  .cyc-meta .when{font-family:var(--mono);color:var(--dim)}
+  .chip{font-family:var(--mono);font-size:12px;border:1px solid var(--line);
+    border-radius:6px;padding:3px 9px;background:var(--panel2)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:right;color:var(--dim);font-weight:500;font-size:11px;
+    text-transform:uppercase;letter-spacing:.4px;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:8px 10px;border-bottom:1px solid var(--panel2);font-family:var(--mono)}
+  tbody tr:hover{background:var(--panel2)}
+  .sym{font-weight:600;font-family:inherit}
+  .bar{display:inline-block;height:7px;border-radius:3px;vertical-align:middle;margin-left:7px;background:var(--down);opacity:.55}
+  .foot{color:var(--dim);font-size:12px;margin-top:24px;line-height:1.7}
+  .foot code{font-family:var(--mono);background:var(--panel2);padding:1px 6px;border-radius:4px;color:var(--txt)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>做空涨幅榜 · 回测</h1>
+    <span class="tag" id="tagStrat">strategy</span>
+    <span class="sub" id="tagPeriod"></span>
+  </header>
+
+  <div class="verdict" id="verdict"></div>
+
+  <div class="grid" id="metrics"></div>
+
+  <div class="panel">
+    <h2>净值曲线 (Equity Curve)</h2>
+    <div class="chartbox"><canvas id="equityChart"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <h2>盈亏拆解 · 累计 (价格 / 资金费 / 手续费)</h2>
+    <div class="chartbox sm"><canvas id="pnlChart"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <h2>交易过程回放 (Trade Replay)</h2>
+    <div class="controls">
+      <button class="play" id="playBtn">▶ 播放</button>
+      <input type="range" id="scrub" min="0" value="0" />
+      <span class="when mono" id="scrubIdx"></span>
+    </div>
+    <div class="cyc-meta" id="cycMeta"></div>
+    <table>
+      <thead><tr>
+        <th>做空标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>本仓盈亏(含资金费)</th>
+      </tr></thead>
+      <tbody id="cycRows"></tbody>
+    </table>
+  </div>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<script src="./data.js"></script>
+<script>
+const R = window.RESULTS;
+const fmt = (n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const sign = n => (n>=0?'+':'')+fmt(n);
+const tdate = ms => { const d=new Date(ms); const p=x=>String(x).padStart(2,'0');
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:00`; };
+const tdateY = ms => { const d=new Date(ms); return `${d.getFullYear()}-${tdate(ms)}`; };
+
+/* ---------- 头部 / 指标 ---------- */
+const M=R.meta, S=R.summary;
+document.getElementById('tagStrat').textContent = `top${M.top_n} · 每${M.rebalance_hours}h · fee ${(M.fee_rate*100).toFixed(3)}%`;
+document.getElementById('tagPeriod').textContent =
+  `${tdateY(M.period_start)} → ${tdateY(M.period_end)} · 标的池 ${M.universe_effective} · ${M.days}天`;
+
+document.getElementById('verdict').innerHTML =
+  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权做空 24h 涨幅榜前 ${M.top_n}，`+
+  `${S.num_cycles} 个周期后净值 <b class="mono">${fmt(S.final_equity)}</b>，总收益 `+
+  `<b class="mono">${S.total_return_pct}%</b>。逆动量直面加密市场的强趋势，naive 追空被持续碾压——这是一个负 edge 的反面教材。`;
+
+const metricDefs = [
+  ['期末净值', fmt(S.final_equity), S.final_equity>=M.start_equity?'pos':'neg'],
+  ['总收益', S.total_return_pct+'%', S.total_return_pct>=0?'pos':'neg'],
+  ['年化(CAGR)', S.cagr_pct+'%', S.cagr_pct>=0?'pos':'neg'],
+  ['最大回撤', S.max_drawdown_pct+'%', 'neg'],
+  ['夏普', S.sharpe, S.sharpe>=0?'pos':'neg'],
+  ['胜率', S.win_rate_pct+'%', S.win_rate_pct>=50?'pos':'neg'],
+  ['累计资金费', sign(S.total_funding), S.total_funding>=0?'pos':'neg'],
+  ['累计手续费', '-'+fmt(S.total_fees), 'neg'],
+];
+document.getElementById('metrics').innerHTML = metricDefs.map(([k,v,c])=>
+  `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join('');
+
+/* ---------- 净值曲线 ---------- */
+const labels = R.curve.map(c=>tdate(c.time));
+const eq = R.curve.map(c=>c.equity);
+Chart.defaults.color='#7d8aa0'; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily;
+const gridc='#1a2230';
+
+const equityChart = new Chart(document.getElementById('equityChart'),{
+  type:'line',
+  data:{labels,datasets:[
+    {label:'净值',data:eq,borderColor:'#3fb6ff',borderWidth:1.6,pointRadius:0,
+     fill:true,backgroundColor:ctx=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,300);
+       g.addColorStop(0,'rgba(63,182,255,.22)');g.addColorStop(1,'rgba(63,182,255,0)');return g;},tension:.15},
+    {label:'当前',data:[],borderColor:'#f5b94a',backgroundColor:'#f5b94a',
+     pointRadius:5,pointHoverRadius:5,showLine:false}
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,animation:false,
+    interaction:{intersect:false,mode:'index'},
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' 净值 '+fmt(c.parsed.y)}}},
+    scales:{x:{grid:{color:gridc},ticks:{maxTicksLimit:9,autoSkip:true}},
+            y:{grid:{color:gridc},ticks:{callback:v=>fmt(v,0)}}}}
+});
+
+/* ---------- 盈亏拆解(累计) ---------- */
+let cp=0,cf=0,ce=0; const cumP=[],cumF=[],cumE=[];
+R.cycles.forEach(c=>{cp+=c.pnl_price;cf+=c.pnl_funding;ce+=c.fee;cumP.push(cp);cumF.push(cf);cumE.push(-ce);});
+new Chart(document.getElementById('pnlChart'),{
+  type:'line',
+  data:{labels:R.cycles.map(c=>tdate(c.time)),datasets:[
+    {label:'价格盈亏',data:cumP,borderColor:'#ef4444',borderWidth:1.5,pointRadius:0,tension:.15},
+    {label:'资金费',data:cumF,borderColor:'#a78bfa',borderWidth:1.5,pointRadius:0,tension:.15},
+    {label:'手续费',data:cumE,borderColor:'#f5b94a',borderWidth:1.5,pointRadius:0,tension:.15},
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,animation:false,
+    interaction:{intersect:false,mode:'index'},
+    plugins:{legend:{display:true,labels:{boxWidth:10,boxHeight:10,usePointStyle:true,padding:16}},
+      tooltip:{callbacks:{label:c=>' '+c.dataset.label+' '+sign(c.parsed.y)}}},
+    scales:{x:{grid:{color:gridc},ticks:{maxTicksLimit:9,autoSkip:true}},
+            y:{grid:{color:gridc},ticks:{callback:v=>fmt(v,0)}}}}
+});
+
+/* ---------- 交易过程回放 ---------- */
+const cyc=R.cycles;
+const scrub=document.getElementById('scrub'); scrub.max=cyc.length-1;
+const playBtn=document.getElementById('playBtn');
+const maxRet = Math.max(...cyc.flatMap(c=>c.shorts.map(s=>Math.abs(s.ret24_pct))),1);
+
+function render(i){
+  const c=cyc[i];
+  document.getElementById('scrubIdx').textContent=`#${i+1} / ${cyc.length}`;
+  equityChart.data.datasets[1].data = R.curve.map((p,idx)=> idx===i?{x:tdate(p.time),y:p.equity}:null).filter(Boolean);
+  equityChart.update();
+
+  const net=c.net, pc=c.pnl_price, pf=c.pnl_funding, fee=c.fee;
+  document.getElementById('cycMeta').innerHTML =
+    `<span class="when">${tdateY(c.time)}</span>`+
+    `<span class="chip">净值 ${fmt(c.equity)}</span>`+
+    `<span class="chip ${net>=0?'pos':'neg'}">本周期净额 ${sign(net)}</span>`+
+    `<span class="chip ${pc>=0?'pos':'neg'}">价格 ${sign(pc)}</span>`+
+    `<span class="chip ${pf>=0?'pos':'neg'}">资金费 ${sign(pf)}</span>`+
+    `<span class="chip neg">手续费 -${fmt(fee)}</span>`;
+
+  document.getElementById('cycRows').innerHTML = c.shorts.map(s=>{
+    const pnl = s.pnl, has = pnl!==null;
+    const w = Math.max(2, Math.abs(s.ret24_pct)/maxRet*70);
+    return `<tr>
+      <td class="sym">${s.symbol}</td>
+      <td><span class="neg">+${fmt(s.ret24_pct)}%</span><span class="bar" style="width:${w}px"></span></td>
+      <td>${s.entry}</td>
+      <td>${s.exit??'—'}</td>
+      <td class="${has?(pnl>=0?'pos':'neg'):''}">${has?sign(pnl):'持仓中'}</td>
+    </tr>`;
+  }).join('');
+}
+
+scrub.addEventListener('input',()=>{stop();render(+scrub.value);});
+
+let timer=null;
+function stop(){if(timer){clearInterval(timer);timer=null;playBtn.textContent='▶ 播放';playBtn.classList.remove('playing');}}
+function play(){
+  if(timer){stop();return;}
+  playBtn.textContent='⏸ 暂停';playBtn.classList.add('playing');
+  if(+scrub.value>=cyc.length-1) scrub.value=0;
+  timer=setInterval(()=>{
+    let v=+scrub.value;
+    if(v>=cyc.length-1){stop();return;}
+    scrub.value=v+1;render(v+1);
+  },220);
+}
+playBtn.addEventListener('click',play);
+render(0);
+
+/* ---------- 脚注 ---------- */
+document.getElementById('foot').innerHTML =
+  `数据: Binance USDT 永续 1h K线 + 资金费率历史 (首尔服务器直连)。`+
+  `回测引擎 <code>backtest/short_gainers.py</code> 生成 <code>data.js</code>。`+
+  `<br/>成本建模: taker 手续费 <code>${(M.fee_rate*100).toFixed(3)}%</code> 按换手名义收取; 资金费每 8h 结算, 费率为正时空头收取。`+
+  `<br/>⚠️ 仅供研究演示, 非投资建议; 未计入滑点/借币费/爆仓, 等权 1x 无杠杆。`;
+</script>
+</body>
+</html>

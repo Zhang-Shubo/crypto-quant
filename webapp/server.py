@@ -270,7 +270,10 @@ class Handler(BaseHTTPRequestHandler):
                 kl = client.klines(sym, interval, limit)
                 candles = [{"time": int(k[0]) // 1000, "open": float(k[1]), "high": float(k[2]),
                             "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])} for k in kl]
-                return self._json({"symbol": sym, "interval": interval, "candles": candles})
+                pp = _prec.get(sym, {})
+                return self._json({"symbol": sym, "interval": interval, "candles": candles,
+                                   "price_precision": pp.get("price_prec", 2),
+                                   "tick_size": pp.get("tick_size")})
             if path == "/api/monitor":
                 syms = {p["symbol"] for p in PLAN["positions"]}
                 px = mark_prices(syms) if syms else {}

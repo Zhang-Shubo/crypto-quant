@@ -120,13 +120,17 @@ async function selectSym(sym){
   try{
     const r=await fetch(`./api/klines?symbol=${sym}&interval=${curIv}&limit=200`,{cache:'no-store'});
     const d=await r.json();
+    // 价格轴最小刻度按该合约真实 tickSize 自适应 (避免 0.01 默认刻度把小价币压扁)
+    const pp=(d.price_precision!=null)?d.price_precision:2;
+    const mm=(d.tick_size&&d.tick_size>0)?d.tick_size:Math.pow(10,-pp);
+    series.applyOptions({priceFormat:{type:'price',precision:pp,minMove:mm}});
     series.setData(d.candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
     chart.timeScale().fitContent();
     const last=d.candles[d.candles.length-1], first=d.candles[0];
     const chg=(last.close/first.open-1)*100;
     document.getElementById('khead').innerHTML=
       `<span class="ksym">${sym}</span>`+
-      `<span class="kprice">${g(last.close)}</span>`+
+      `<span class="kprice">${Number(last.close).toFixed(Math.min(pp,8))}</span>`+
       `<span class="${chg>=0?'pos':'neg'} mono">${chg>=0?'+':''}${fmt(chg)}% (${curIv}×${d.candles.length})</span>`;
   }catch(e){ document.getElementById('kempty').style.display='flex';
     document.getElementById('kempty').textContent='K线加载失败'; }

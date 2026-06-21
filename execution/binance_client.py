@@ -97,12 +97,17 @@ class BinanceFutures:
         out = {}
         for s in info["symbols"]:
             min_notional = 5.0
+            tick_size = None
             for f in s.get("filters", []):
-                if f.get("filterType") in ("MIN_NOTIONAL", "NOTIONAL"):
+                ft = f.get("filterType")
+                if ft in ("MIN_NOTIONAL", "NOTIONAL"):
                     min_notional = float(f.get("notional", f.get("minNotional", 5.0)))
+                elif ft == "PRICE_FILTER":
+                    tick_size = float(f.get("tickSize", 0)) or None
             out[s["symbol"]] = {
                 "qty_prec": s.get("quantityPrecision", 3),
                 "price_prec": s.get("pricePrecision", 2),
+                "tick_size": tick_size,
                 "min_notional": min_notional,
             }
         return out

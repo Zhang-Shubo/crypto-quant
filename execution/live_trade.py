@@ -35,10 +35,12 @@ def round_down(x: float, prec: int) -> float:
     return math.floor(x * f) / f
 
 
-def pick_gainers(client: BinanceFutures, top: int, prec: dict) -> list[dict]:
-    """从合约 24h 行情选 USDT 永续涨幅榜前 N。"""
+def pick_gainers(ticker_client: BinanceFutures, top: int, prec: dict) -> list[dict]:
+    """从 ticker_client 的 24h 行情选 USDT 永续涨幅榜前 N。
+    prec 来自【执行所】交易规则: 排榜来源可与执行所不同(如实盘排榜/testnet执行),
+    sym not in prec 会自动跳过执行所不存在的合约。"""
     rows = []
-    for t in client.ticker_24hr():
+    for t in ticker_client.ticker_24hr():
         sym = t["symbol"]
         if not sym.endswith("USDT") or sym.endswith(LEVERAGED) or sym not in prec:
             continue
@@ -66,17 +68,23 @@ def main(argv=None) -> int:
     p.add_argument("--min-qvol", type=float, default=1_000_000, help="标的最小24h成交额过滤")
     p.add_argument("--live", action="store_true", help="⚠️ 用实盘 (默认 testnet)")
     p.add_argument("--execute", action="store_true", help="真正下单 (默认 dry-run 只打印)")
+    p.add_argument("--signal", choices=["venue", "live"], default="venue",
+                   help="涨幅榜数据来源: venue=执行所自身(testnet数据是模拟的) / live=实盘数据 (默认venue)")
     args = p.parse_args(argv)
 
     testnet = not args.live
     client = BinanceFutures(testnet=testnet)
+    # 排榜来源: live 用实盘行情、testnet 执行(真实信号); 否则用执行所自身行情
+    signal_client = BinanceFutures(testnet=False) if args.signal == "live" else client
     env = "TESTNET (测试币)" if testnet else "★ 实盘 LIVE (真金) ★"
     close_side = "BUY" if args.side == "short" else "SELL"   # 平仓方向
     open_side = "SELL" if args.side == "short" else "BUY"
     side_cn = "做空" if args.side == "short" else "做多"
 
+    sig_src = "实盘行情(真实信号)" if args.signal == "live" else ("testnet模拟数据" if testnet else "实盘行情")
     print(f"环境: {env}   模式: {'下单' if args.execute else 'DRY-RUN(只打印)'}")
     print(f"策略: 每轮{side_cn} 24h 涨幅榜前 {args.top} · 止损{args.sl:.0%} 止盈{args.tp:.0%} · {args.leverage}x")
+    print(f"排榜来源: {sig_src}")
 
     # 连通性
     try:
@@ -98,9 +106,11 @@ def main(argv=None) -> int:
     notional_each = deploy / args.top
     print(f"资金: 总额 {equity:.2f} → 动用 {deploy:.2f} (×{args.fraction}) → 每仓 {notional_each:.2f} USDT\n")
 
-    picks = [g for g in pick_gainers(client, args.top, prec) if g["qvol"] >= args.min_qvol]
+    picks = [g for g in pick_gainers(signal_client, args.top, prec) if g["qvol"] >= args.min_qvol]
     if not picks:
         print("[提示] 无符合条件标的"); return 0
+    if args.signal == "live" and testnet:
+        print("(已用实盘涨幅榜选标的, 自动跳过 testnet 不存在的合约)\n")
 
     if args.live and args.execute:
         print("⚠️⚠️  即将用【实盘真金】下单。Ctrl-C 可中止。\n")

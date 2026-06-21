@@ -52,6 +52,11 @@
   tbody tr:hover{background:var(--panel2)}
   .sym{font-weight:600;font-family:inherit}
   .bar{display:inline-block;height:7px;border-radius:3px;vertical-align:middle;margin-left:7px;background:var(--down);opacity:.55}
+  .rtag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:5px;border:1px solid var(--line)}
+  .rtag.neg{color:var(--down);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08)}
+  .rtag.pos{color:var(--up);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
+  .rtag.dimtag{color:var(--dim)}
+  .hold{color:var(--dim);font-size:11px;margin-left:6px}
   .foot{color:var(--dim);font-size:12px;margin-top:24px;line-height:1.7}
   .foot code{font-family:var(--mono);background:var(--panel2);padding:1px 6px;border-radius:4px;color:var(--txt)}
 </style>
@@ -88,7 +93,7 @@
     <div class="cyc-meta" id="cycMeta"></div>
     <table>
       <thead><tr>
-        <th>做空标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>本仓盈亏(含资金费)</th>
+        <th>做空标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>离场</th><th>本仓盈亏(含资金费)</th>
       </tr></thead>
       <tbody id="cycRows"></tbody>
     </table>
@@ -108,14 +113,22 @@ const tdateY = ms => { const d=new Date(ms); return `${d.getFullYear()}-${tdate(
 
 /* ---------- 头部 / 指标 ---------- */
 const M=R.meta, S=R.summary;
-document.getElementById('tagStrat').textContent = `top${M.top_n} · 每${M.rebalance_hours}h · fee ${(M.fee_rate*100).toFixed(3)}%`;
+const slTxt = M.stop_loss!=null ? `止损${(M.stop_loss*100).toFixed(0)}% · 止盈${(M.take_profit*100).toFixed(0)}%` : '';
+document.getElementById('tagStrat').textContent =
+  `top${M.top_n} · 每${M.rebalance_hours}h · ${slTxt} · fee ${(M.fee_rate*100).toFixed(3)}%`;
 document.getElementById('tagPeriod').textContent =
   `${tdateY(M.period_start)} → ${tdateY(M.period_end)} · 标的池 ${M.universe_effective} · ${M.days}天`;
 
+const ex = S.exits || {};
+const exLine = S.exit_sl_pct!=null
+  ? `离场构成：止损 <b class="neg">${S.exit_sl_pct}%</b>（${ex.SL}）· 止盈 <b class="pos">${S.exit_tp_pct}%</b>（${ex.TP}）· 到时间 <b>${S.exit_time_pct}%</b>（${ex.TIME}）。`
+  : '';
 document.getElementById('verdict').innerHTML =
-  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权做空 24h 涨幅榜前 ${M.top_n}，`+
+  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权做空 24h 涨幅榜前 ${M.top_n}`+
+  (slTxt?`，单仓 ${slTxt}、未触发到时间平仓`:'')+`。`+
   `${S.num_cycles} 个周期后净值 <b class="mono">${fmt(S.final_equity)}</b>，总收益 `+
-  `<b class="mono">${S.total_return_pct}%</b>。逆动量直面加密市场的强趋势，naive 追空被持续碾压——这是一个负 edge 的反面教材。`;
+  `<b class="mono">${S.total_return_pct}%</b>。<br/>${exLine}`+
+  `止盈 50% 在 6h 内极难触发，做空暴涨币则频繁打到止损——止损止盈截断了单笔灾难，却没能扭转<b>逆动量的负 edge</b>。`;
 
 const metricDefs = [
   ['期末净值', fmt(S.final_equity), S.final_equity>=M.start_equity?'pos':'neg'],
@@ -191,14 +204,20 @@ function render(i){
     `<span class="chip ${pf>=0?'pos':'neg'}">资金费 ${sign(pf)}</span>`+
     `<span class="chip neg">手续费 -${fmt(fee)}</span>`;
 
+  const RM = {SL:['止损','neg'], TP:['止盈','pos'], TIME:['到时间','dimtag']};
   document.getElementById('cycRows').innerHTML = c.shorts.map(s=>{
     const pnl = s.pnl, has = pnl!==null;
     const w = Math.max(2, Math.abs(s.ret24_pct)/maxRet*70);
+    const rm = RM[s.reason] || ['—','dimtag'];
+    const exitTag = s.reason
+      ? `<span class="rtag ${rm[1]}">${rm[0]}</span>${s.hold_h!=null?`<span class="hold">${s.hold_h}h</span>`:''}`
+      : '—';
     return `<tr>
       <td class="sym">${s.symbol}</td>
       <td><span class="neg">+${fmt(s.ret24_pct)}%</span><span class="bar" style="width:${w}px"></span></td>
       <td>${s.entry}</td>
       <td>${s.exit??'—'}</td>
+      <td>${exitTag}</td>
       <td class="${has?(pnl>=0?'pos':'neg'):''}">${has?sign(pnl):'持仓中'}</td>
     </tr>`;
   }).join('');

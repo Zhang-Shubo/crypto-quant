@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>做空涨幅榜 · 回测可视化</title>
+<title>策略汇总 · crypto-quant 回测</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root{
@@ -18,242 +18,162 @@
     -webkit-font-smoothing:antialiased;line-height:1.5}
   .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 60px}
   header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
-  h1{font-size:21px;font-weight:650;margin:0;letter-spacing:.2px}
+  h1{font-size:22px;font-weight:650;margin:0;letter-spacing:.2px}
   .sub{color:var(--dim);font-size:13px}
-  .tag{font-family:var(--mono);font-size:11px;color:var(--accent);
-    border:1px solid var(--line);border-radius:6px;padding:2px 8px;background:var(--panel2)}
-  .verdict{margin:16px 0 22px;padding:13px 16px;border-radius:10px;font-size:14px;
-    border:1px solid var(--line);background:linear-gradient(90deg,rgba(239,68,68,.10),transparent)}
-  .verdict b{color:var(--down)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:22px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:13px 15px}
-  .card .k{color:var(--dim);font-size:12px;margin-bottom:5px}
-  .card .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.3px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px 18px 14px;margin-bottom:18px}
-  .panel h2{font-size:13px;font-weight:600;color:var(--dim);margin:0 0 14px;text-transform:uppercase;letter-spacing:.6px}
-  .chartbox{position:relative;height:300px}
-  .chartbox.sm{height:200px}
+  .intro{margin:14px 0 24px;color:var(--dim);font-size:13.5px;max-width:880px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:18px;margin-bottom:20px}
+  .panel h2{font-size:13px;font-weight:600;color:var(--dim);margin:0 0 14px;text-transform:uppercase;letter-spacing:.6px;
+    display:flex;justify-content:space-between;align-items:center}
+  .toggle{display:flex;gap:6px}
+  .toggle button{background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:7px;
+    font-size:12px;padding:4px 11px;cursor:pointer}
+  .toggle button.on{background:var(--accent);color:#04121f;border-color:var(--accent);font-weight:650}
+  .chartbox{position:relative;height:340px}
   .pos{color:var(--up)} .neg{color:var(--down)} .mono{font-family:var(--mono)}
-  /* 回放控制 */
-  .controls{display:flex;align-items:center;gap:14px;margin-bottom:16px}
-  button.play{background:var(--accent);color:#04121f;border:none;border-radius:8px;
-    font-size:13px;font-weight:650;padding:8px 16px;cursor:pointer;min-width:74px}
-  button.play.playing{background:var(--gold)}
-  input[type=range]{flex:1;accent-color:var(--accent);height:4px}
-  .cyc-meta{display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px;font-size:13px}
-  .cyc-meta .when{font-family:var(--mono);color:var(--dim)}
-  .chip{font-family:var(--mono);font-size:12px;border:1px solid var(--line);
-    border-radius:6px;padding:3px 9px;background:var(--panel2)}
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th{text-align:right;color:var(--dim);font-weight:500;font-size:11px;
-    text-transform:uppercase;letter-spacing:.4px;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th{text-align:right;color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;
+    letter-spacing:.4px;padding:9px 11px;border-bottom:1px solid var(--line);white-space:nowrap}
   th:first-child,td:first-child{text-align:left}
-  td{padding:8px 10px;border-bottom:1px solid var(--panel2);font-family:var(--mono)}
+  td{padding:11px;border-bottom:1px solid var(--panel2);font-family:var(--mono);white-space:nowrap}
+  tbody tr{cursor:pointer}
   tbody tr:hover{background:var(--panel2)}
-  .sym{font-weight:600;font-family:inherit}
-  .bar{display:inline-block;height:7px;border-radius:3px;vertical-align:middle;margin-left:7px;background:var(--down);opacity:.55}
-  .rtag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:5px;border:1px solid var(--line)}
-  .rtag.neg{color:var(--down);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08)}
-  .rtag.pos{color:var(--up);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
-  .rtag.dimtag{color:var(--dim)}
-  .hold{color:var(--dim);font-size:11px;margin-left:6px}
-  .foot{color:var(--dim);font-size:12px;margin-top:24px;line-height:1.7}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px;vertical-align:middle}
+  .stratname{font-family:inherit;font-weight:600}
+  .pill{font-size:11px;padding:1px 8px;border-radius:5px;border:1px solid var(--line);font-family:inherit}
+  .pill.long{color:var(--up);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.07)}
+  .pill.short{color:var(--down);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.07)}
+  .exits{font-size:11px;color:var(--dim)}
+  .arrow{color:var(--dim)}
+  tbody tr:hover .arrow{color:var(--accent)}
+  .foot{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.7}
   .foot code{font-family:var(--mono);background:var(--panel2);padding:1px 6px;border-radius:4px;color:var(--txt)}
+  .err{padding:40px;text-align:center;color:var(--dim)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>做空涨幅榜 · 回测</h1>
-    <span class="tag" id="tagStrat">strategy</span>
-    <span class="sub" id="tagPeriod"></span>
+    <h1>策略汇总 · 涨幅榜回测</h1>
+    <span class="sub" id="meta"></span>
   </header>
-
-  <div class="verdict" id="verdict"></div>
-
-  <div class="grid" id="metrics"></div>
+  <div class="intro" id="intro"></div>
 
   <div class="panel">
-    <h2>净值曲线 (Equity Curve)</h2>
-    <div class="chartbox"><canvas id="equityChart"></canvas></div>
+    <h2>净值对比
+      <span class="toggle">
+        <button id="btnRet" class="on">归一化收益 %</button>
+        <button id="btnLog">净值 (对数)</button>
+      </span>
+    </h2>
+    <div class="chartbox"><canvas id="cmpChart"></canvas></div>
   </div>
 
   <div class="panel">
-    <h2>盈亏拆解 · 累计 (价格 / 资金费 / 手续费)</h2>
-    <div class="chartbox sm"><canvas id="pnlChart"></canvas></div>
-  </div>
-
-  <div class="panel">
-    <h2>交易过程回放 (Trade Replay)</h2>
-    <div class="controls">
-      <button class="play" id="playBtn">▶ 播放</button>
-      <input type="range" id="scrub" min="0" value="0" />
-      <span class="when mono" id="scrubIdx"></span>
-    </div>
-    <div class="cyc-meta" id="cycMeta"></div>
+    <h2>策略对比 (点击查看明细)</h2>
     <table>
       <thead><tr>
-        <th id="thSide">标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>离场</th><th>本仓盈亏(含资金费)</th>
+        <th>策略</th><th>方向</th><th>止损/止盈</th><th>总收益</th><th>期末净值</th>
+        <th>最大回撤</th><th>夏普</th><th>胜率</th><th>离场 SL/TP/时间</th><th></th>
       </tr></thead>
-      <tbody id="cycRows"></tbody>
+      <tbody id="rows"></tbody>
     </table>
   </div>
-
   <div class="foot" id="foot"></div>
 </div>
 
-<script src="./data.js"></script>
 <script>
-const R = window.RESULTS;
-const fmt = (n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
-const sign = n => (n>=0?'+':'')+fmt(n);
-const tdate = ms => { const d=new Date(ms); const p=x=>String(x).padStart(2,'0');
-  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:00`; };
-const tdateY = ms => { const d=new Date(ms); return `${d.getFullYear()}-${tdate(ms)}`; };
+const fmt=(n,d=2)=>Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const sign=n=>(n>=0?'+':'')+fmt(n);
+const tdate=ms=>{const d=new Date(ms);const p=x=>String(x).padStart(2,'0');return `${p(d.getMonth()+1)}-${p(d.getDate())}`;};
+const PALETTE=['#3fb6ff','#22c55e','#ef4444','#f5b94a','#a78bfa','#2dd4bf','#fb7185','#facc15'];
 
-/* ---------- 头部 / 指标 ---------- */
-const M=R.meta, S=R.summary;
-const SIDE = M.side==='long' ? '做多' : '做空';
-const MOM = M.side==='long' ? '顺动量' : '逆动量';
-const slTxt = M.stop_loss!=null ? `止损${(M.stop_loss*100).toFixed(0)}% · 止盈${(M.take_profit*100).toFixed(0)}%` : '';
-document.getElementById('tagStrat').textContent =
-  `${SIDE}top${M.top_n} · 每${M.rebalance_hours}h · ${slTxt} · fee ${(M.fee_rate*100).toFixed(3)}%`;
-document.getElementById('tagPeriod').textContent =
-  `${tdateY(M.period_start)} → ${tdateY(M.period_end)} · 标的池 ${M.universe_effective} · ${M.days}天`;
-document.getElementById('thSide').textContent = `${SIDE}标的`;
-document.querySelector('h1').textContent = `${SIDE}涨幅榜 · 回测`;
-document.title = `${SIDE}涨幅榜 · 回测可视化`;
+let manifest=null, curves={}, mode='ret', chart=null;
 
-const ex = S.exits || {};
-const exLine = S.exit_sl_pct!=null
-  ? `离场构成：止损 <b class="neg">${S.exit_sl_pct}%</b>（${ex.SL}）· 止盈 <b class="pos">${S.exit_tp_pct}%</b>（${ex.TP}）· 到时间 <b>${S.exit_time_pct}%</b>（${ex.TIME}）。`
-  : '';
-const win = S.total_return_pct >= 0;
-const concl = win
-  ? `${MOM}方向在样本期录得 <b class="pos">正收益</b>——但需更长样本与基准对比才能确认 edge 稳健。`
-  : `${MOM}方向在样本期仍为 <b class="neg">亏损</b>，止损止盈只截断单笔极端、未扭转方向本身。`;
-document.getElementById('verdict').innerHTML =
-  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权${SIDE} 24h 涨幅榜前 ${M.top_n}`+
-  (slTxt?`，单仓 ${slTxt}、未触发到时间平仓`:'')+`。`+
-  `${S.num_cycles} 个周期后净值 <b class="mono">${fmt(S.final_equity)}</b>，总收益 `+
-  `<b class="mono ${win?'pos':'neg'}">${S.total_return_pct}%</b>。<br/>${exLine}${concl}`;
+fetch('./runs/manifest.json')
+  .then(r=>{if(!r.ok)throw 0;return r.json();})
+  .then(async m=>{
+    manifest=m;
+    if(!m.runs||!m.runs.length){throw 0;}
+    // 拉每个 run 的曲线
+    await Promise.all(m.runs.map(async run=>{
+      try{const r=await fetch(`./runs/${run.id}.json`); if(r.ok){const j=await r.json(); curves[run.id]=j.curve;}}catch(e){}
+    }));
+    renderAll();
+  })
+  .catch(()=>{
+    document.querySelector('.wrap').innerHTML =
+      `<div class="err">还没有回测结果。<br/>在服务器跑 <code>python3 backtest/short_gainers.py --batch</code> 生成 runs/ 后刷新。</div>`;
+  });
 
-const metricDefs = [
-  ['期末净值', fmt(S.final_equity), S.final_equity>=M.start_equity?'pos':'neg'],
-  ['总收益', S.total_return_pct+'%', S.total_return_pct>=0?'pos':'neg'],
-  ['年化(CAGR)', S.cagr_pct+'%', S.cagr_pct>=0?'pos':'neg'],
-  ['最大回撤', S.max_drawdown_pct+'%', 'neg'],
-  ['夏普', S.sharpe, S.sharpe>=0?'pos':'neg'],
-  ['胜率', S.win_rate_pct+'%', S.win_rate_pct>=50?'pos':'neg'],
-  ['累计资金费', sign(S.total_funding), S.total_funding>=0?'pos':'neg'],
-  ['累计手续费', '-'+fmt(S.total_fees), 'neg'],
-];
-document.getElementById('metrics').innerHTML = metricDefs.map(([k,v,c])=>
-  `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`).join('');
+function renderAll(){
+  const runs=manifest.runs;
+  const best=runs[0];
+  document.getElementById('meta').textContent =
+    `${runs.length} 个策略 · 标的池 ${best.universe_effective} · ${best.days}天 · 每${best.rebalance_hours}h调仓`;
+  document.getElementById('intro').innerHTML =
+    `同一标的池、同一区间下，对「每${best.rebalance_hours}h 取 24h 涨幅榜前 ${best.top_n}」做不同<b>方向</b>（做多/做空）与不同<b>止损/止盈</b>参数的回测对比。`+
+    `当前最佳：<b class="${best.total_return_pct>=0?'pos':'neg'}">${best.label}</b>（${sign(best.total_return_pct)}%）。`+
+    `<br/>⚠️ 均为单一历史窗口、未计滑点/爆仓，高收益大概率含 regime 偏差，需更长样本与基准对比验证。`;
 
-/* ---------- 净值曲线 ---------- */
-const labels = R.curve.map(c=>tdate(c.time));
-const eq = R.curve.map(c=>c.equity);
-Chart.defaults.color='#7d8aa0'; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily;
-const gridc='#1a2230';
-
-const equityChart = new Chart(document.getElementById('equityChart'),{
-  type:'line',
-  data:{labels,datasets:[
-    {label:'净值',data:eq,borderColor:'#3fb6ff',borderWidth:1.6,pointRadius:0,
-     fill:true,backgroundColor:ctx=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,300);
-       g.addColorStop(0,'rgba(63,182,255,.22)');g.addColorStop(1,'rgba(63,182,255,0)');return g;},tension:.15},
-    {label:'当前',data:[],borderColor:'#f5b94a',backgroundColor:'#f5b94a',
-     pointRadius:5,pointHoverRadius:5,showLine:false}
-  ]},
-  options:{responsive:true,maintainAspectRatio:false,animation:false,
-    interaction:{intersect:false,mode:'index'},
-    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' 净值 '+fmt(c.parsed.y)}}},
-    scales:{x:{grid:{color:gridc},ticks:{maxTicksLimit:9,autoSkip:true}},
-            y:{grid:{color:gridc},ticks:{callback:v=>fmt(v,0)}}}}
-});
-
-/* ---------- 盈亏拆解(累计) ---------- */
-let cp=0,cf=0,ce=0; const cumP=[],cumF=[],cumE=[];
-R.cycles.forEach(c=>{cp+=c.pnl_price;cf+=c.pnl_funding;ce+=c.fee;cumP.push(cp);cumF.push(cf);cumE.push(-ce);});
-new Chart(document.getElementById('pnlChart'),{
-  type:'line',
-  data:{labels:R.cycles.map(c=>tdate(c.time)),datasets:[
-    {label:'价格盈亏',data:cumP,borderColor:'#ef4444',borderWidth:1.5,pointRadius:0,tension:.15},
-    {label:'资金费',data:cumF,borderColor:'#a78bfa',borderWidth:1.5,pointRadius:0,tension:.15},
-    {label:'手续费',data:cumE,borderColor:'#f5b94a',borderWidth:1.5,pointRadius:0,tension:.15},
-  ]},
-  options:{responsive:true,maintainAspectRatio:false,animation:false,
-    interaction:{intersect:false,mode:'index'},
-    plugins:{legend:{display:true,labels:{boxWidth:10,boxHeight:10,usePointStyle:true,padding:16}},
-      tooltip:{callbacks:{label:c=>' '+c.dataset.label+' '+sign(c.parsed.y)}}},
-    scales:{x:{grid:{color:gridc},ticks:{maxTicksLimit:9,autoSkip:true}},
-            y:{grid:{color:gridc},ticks:{callback:v=>fmt(v,0)}}}}
-});
-
-/* ---------- 交易过程回放 ---------- */
-const cyc=R.cycles;
-const scrub=document.getElementById('scrub'); scrub.max=cyc.length-1;
-const playBtn=document.getElementById('playBtn');
-const maxRet = Math.max(...cyc.flatMap(c=>c.shorts.map(s=>Math.abs(s.ret24_pct))),1);
-
-function render(i){
-  const c=cyc[i];
-  document.getElementById('scrubIdx').textContent=`#${i+1} / ${cyc.length}`;
-  equityChart.data.datasets[1].data = R.curve.map((p,idx)=> idx===i?{x:tdate(p.time),y:p.equity}:null).filter(Boolean);
-  equityChart.update();
-
-  const net=c.net, pc=c.pnl_price, pf=c.pnl_funding, fee=c.fee;
-  document.getElementById('cycMeta').innerHTML =
-    `<span class="when">${tdateY(c.time)}</span>`+
-    `<span class="chip">净值 ${fmt(c.equity)}</span>`+
-    `<span class="chip ${net>=0?'pos':'neg'}">本周期净额 ${sign(net)}</span>`+
-    `<span class="chip ${pc>=0?'pos':'neg'}">价格 ${sign(pc)}</span>`+
-    `<span class="chip ${pf>=0?'pos':'neg'}">资金费 ${sign(pf)}</span>`+
-    `<span class="chip neg">手续费 -${fmt(fee)}</span>`;
-
-  const RM = {SL:['止损','neg'], TP:['止盈','pos'], TIME:['到时间','dimtag']};
-  document.getElementById('cycRows').innerHTML = c.shorts.map(s=>{
-    const pnl = s.pnl, has = pnl!==null;
-    const w = Math.max(2, Math.abs(s.ret24_pct)/maxRet*70);
-    const rm = RM[s.reason] || ['—','dimtag'];
-    const exitTag = s.reason
-      ? `<span class="rtag ${rm[1]}">${rm[0]}</span>${s.hold_h!=null?`<span class="hold">${s.hold_h}h</span>`:''}`
-      : '—';
-    return `<tr>
-      <td class="sym">${s.symbol}</td>
-      <td><span class="neg">+${fmt(s.ret24_pct)}%</span><span class="bar" style="width:${w}px"></span></td>
-      <td>${s.entry}</td>
-      <td>${s.exit??'—'}</td>
-      <td>${exitTag}</td>
-      <td class="${has?(pnl>=0?'pos':'neg'):''}">${has?sign(pnl):'持仓中'}</td>
+  // 表格
+  document.getElementById('rows').innerHTML = runs.map((r,i)=>{
+    const col=PALETTE[i%PALETTE.length];
+    const ex=`${r.exit_sl_pct}/${r.exit_tp_pct}/${r.exit_time_pct}`;
+    return `<tr onclick="location.href='run.html?id=${r.id}'">
+      <td><span class="dot" style="background:${col}"></span><span class="stratname">${r.label}</span></td>
+      <td><span class="pill ${r.side}">${r.side==='long'?'做多':'做空'}</span></td>
+      <td>${(r.stop_loss*100).toFixed(0)}% / ${(r.take_profit*100).toFixed(0)}%</td>
+      <td class="${r.total_return_pct>=0?'pos':'neg'}">${sign(r.total_return_pct)}%</td>
+      <td>${fmt(r.final_equity)}</td>
+      <td class="neg">${r.max_drawdown_pct}%</td>
+      <td class="${r.sharpe>=0?'pos':'neg'}">${r.sharpe}</td>
+      <td>${r.win_rate_pct}%</td>
+      <td class="exits">${ex}</td>
+      <td class="arrow">明细 →</td>
     </tr>`;
   }).join('');
+
+  document.getElementById('foot').innerHTML =
+    `数据: Binance USDT 永续 (首尔直连)。每个策略=方向×止损止盈参数，由 <code>backtest/short_gainers.py --batch</code> 生成 <code>runs/&lt;id&gt;.json</code> + <code>manifest.json</code>。点策略行进入回放明细。`;
+
+  drawChart();
 }
 
-scrub.addEventListener('input',()=>{stop();render(+scrub.value);});
-
-let timer=null;
-function stop(){if(timer){clearInterval(timer);timer=null;playBtn.textContent='▶ 播放';playBtn.classList.remove('playing');}}
-function play(){
-  if(timer){stop();return;}
-  playBtn.textContent='⏸ 暂停';playBtn.classList.add('playing');
-  if(+scrub.value>=cyc.length-1) scrub.value=0;
-  timer=setInterval(()=>{
-    let v=+scrub.value;
-    if(v>=cyc.length-1){stop();return;}
-    scrub.value=v+1;render(v+1);
-  },220);
+function drawChart(){
+  Chart.defaults.color='#7d8aa0'; Chart.defaults.font.family=getComputedStyle(document.body).fontFamily;
+  const runs=manifest.runs;
+  // 用曲线最长的作为标签轴
+  let base=null;
+  runs.forEach(r=>{const c=curves[r.id]; if(c&&(!base||c.length>base.length))base=c;});
+  if(!base){return;}
+  const labels=base.map(p=>tdate(p.time));
+  const datasets=runs.map((r,i)=>{
+    const c=curves[r.id]||[]; const col=PALETTE[i%PALETTE.length];
+    const data=c.map(p=> mode==='ret' ? (p.equity/r.start_equity-1)*100 : p.equity);
+    return {label:r.label,data,borderColor:col,backgroundColor:col,borderWidth:1.6,pointRadius:0,tension:.12};
+  });
+  const cfg={
+    type:'line',
+    data:{labels,datasets},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      interaction:{intersect:false,mode:'index'},
+      plugins:{legend:{display:true,labels:{boxWidth:10,boxHeight:10,usePointStyle:true,padding:14,font:{size:12}}},
+        tooltip:{callbacks:{label:c=> ' '+c.dataset.label+' '+(mode==='ret'?sign(c.parsed.y)+'%':fmt(c.parsed.y))}}},
+      scales:{x:{grid:{color:'#1a2230'},ticks:{maxTicksLimit:9,autoSkip:true}},
+        y: mode==='log'
+          ? {type:'logarithmic',grid:{color:'#1a2230'},ticks:{callback:v=>fmt(v,0)}}
+          : {grid:{color:'#1a2230'},ticks:{callback:v=>sign(v)+'%'}}}}
+  };
+  if(chart)chart.destroy();
+  chart=new Chart(document.getElementById('cmpChart'),cfg);
 }
-playBtn.addEventListener('click',play);
-render(0);
 
-/* ---------- 脚注 ---------- */
-document.getElementById('foot').innerHTML =
-  `数据: Binance USDT 永续 1h K线 + 资金费率历史 (首尔服务器直连)。`+
-  `回测引擎 <code>backtest/short_gainers.py</code> 生成 <code>data.js</code>。`+
-  `<br/>成本建模: taker 手续费 <code>${(M.fee_rate*100).toFixed(3)}%</code> 按换手名义收取; 资金费每 8h 结算, 费率为正时空头收取。`+
-  `<br/>⚠️ 仅供研究演示, 非投资建议; 未计入滑点/借币费/爆仓, 等权 1x 无杠杆。`;
+document.getElementById('btnRet').onclick=()=>{mode='ret';setToggle();drawChart();};
+document.getElementById('btnLog').onclick=()=>{mode='log';setToggle();drawChart();};
+function setToggle(){
+  document.getElementById('btnRet').classList.toggle('on',mode==='ret');
+  document.getElementById('btnLog').classList.toggle('on',mode==='log');
+}
 </script>
 </body>
 </html>

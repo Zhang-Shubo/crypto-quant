@@ -78,41 +78,43 @@ function renderMonitor(st){
     `<div class="scard"><div class="k">投入名义</div><div class="v">${fmt(s.total_notional)} U</div></div>`+
     `<div class="scard"><div class="k">合计浮盈</div><div class="v ${s.total_pnl>=0?'pos':'neg'}">${sign(s.total_pnl)} U</div></div>`+
     `<div class="scard"><div class="k">浮盈率</div><div class="v ${s.total_pnl>=0?'pos':'neg'}">${sign(s.total_notional?s.total_pnl/s.total_notional*100:0)}%</div></div>`+
-    `<div class="scard"><div class="k">触发</div><div class="v">${s.hit} / ${P.positions.length}</div></div>`;
+    `<div class="scard"><div class="k">已平仓</div><div class="v">${s.hit} / ${P.positions.length}</div></div>`;
 
   document.getElementById('list').innerHTML=P.positions.map(p=>{
-    const cur=px[p.symbol];
-    if(cur==null) return `<div class="poscard"><div class="pr"><span class="sym">${p.symbol}</span><span class="st">无行情</span></div></div>`;
-    const pnl=p.qty*(cur-p.entry)*dir, pnlPct=(cur-p.entry)/p.entry*dir*100;
-    const toSL=(p.sl/cur-1)*100, toTP=(p.tp/cur-1)*100;
+    const closed=p.closed, cur=px[p.symbol];
+    const ref = closed ? p.exit : cur;        // 已平: 盈亏定格在出场价
+    if(ref==null) return `<div class="poscard"><div class="pr"><span class="sym">${p.symbol}</span><span class="st">无行情</span></div></div>`;
+    const pnl=p.qty*(ref-p.entry)*dir, pnlPct=(ref-p.entry)/p.entry*dir*100;
     const lo=Math.min(p.sl,p.tp), hi=Math.max(p.sl,p.tp);
-    const posPct=clamp((cur-lo)/(hi-lo),0,1)*100, entPct=clamp((p.entry-lo)/(hi-lo),0,1)*100;
-    let status,scls;
-    if(P.side==='long'){ if(cur<=p.sl){status='已触止损';scls='neg'} else if(cur>=p.tp){status='已触止盈';scls='pos'} else {status='持仓中';scls='mono'} }
-    else { if(cur>=p.sl){status='已触止损';scls='neg'} else if(cur<=p.tp){status='已触止盈';scls='pos'} else {status='持仓中';scls='mono'} }
+    const posPct=clamp((ref-lo)/(hi-lo),0,1)*100, entPct=clamp((p.entry-lo)/(hi-lo),0,1)*100;
+    const status = closed ? (p.reason==='SL'?'已止损 · 平仓':'已止盈 · 平仓') : '持仓中';
+    const scls = closed ? (p.reason==='SL'?'neg':'pos') : 'mono';
     const leftIsSL=(lo===p.sl), revClass=leftIsSL?'':'rev';
     const leftLab=leftIsSL?`止损 ${g(p.sl)}`:`止盈 ${g(p.tp)}`, rightLab=leftIsSL?`止盈 ${g(p.tp)}`:`止损 ${g(p.sl)}`;
     const leftCls=leftIsSL?'neg':'pos', rightCls=leftIsSL?'pos':'neg';
-    return `<div class="poscard">
+    const card=closed?'border-color:'+(p.reason==='SL'?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)'):'';
+    const bottom = closed
+      ? `<span><span class="lab">出场(已平)</span><b class="${p.reason==='SL'?'neg':'pos'}">${g(p.exit)}</b> @ ${p.exit_ts?hhmmss(p.exit_ts):''}</span>
+         <span><span class="lab">已实现</span><b class="${pnl>=0?'pos':'neg'}">${sign(pnl)} U</b></span>`
+      : `<span><span class="lab">距止损</span><b class="neg">${sign((p.sl/cur-1)*100)}%</b></span>
+         <span><span class="lab">距止盈</span><b class="pos">${sign((p.tp/cur-1)*100)}%</b></span>
+         <span><span class="lab">浮盈</span><b class="${pnl>=0?'pos':'neg'}">${sign(pnl)} U</b></span>`;
+    return `<div class="poscard" style="${card}">
       <div class="pr"><span class="sym">${p.symbol}</span>
         <span class="pill ${P.side}">${sideCn}</span>
         <span class="pill gold">24h +${fmt(p.chg24,1)}%</span>
         <span class="st ${scls}">${status}　<span class="${pnl>=0?'pos':'neg'}">${sign(pnl)}U (${sign(pnlPct)}%)</span></span></div>
       <div class="prices">
         <span><span class="lab">入场</span>${g(p.entry)}</span>
-        <span><span class="lab">现价(标记)</span><b class="${pnl>=0?'pos':'neg'}">${g(cur)}</b></span>
+        <span><span class="lab">${closed?'出场价':'现价(标记)'}</span><b class="${pnl>=0?'pos':'neg'}">${g(ref)}</b></span>
         <span><span class="lab">数量</span>${g(p.qty)}</span></div>
-      <div class="gauge ${revClass}">
+      <div class="gauge ${revClass}" style="${closed?'opacity:.6':''}">
         <span class="endlab ${leftCls}" style="left:0">${leftLab}</span>
         <span class="endlab ${rightCls}" style="left:100%">${rightLab}</span>
         <span class="tick" style="left:${entPct}%"><span class="cap">入场</span></span>
         <span class="dot" style="left:${posPct}%;background:${pnl>=0?'var(--up)':'var(--down)'};box-shadow:0 0 0 1px ${pnl>=0?'var(--up)':'var(--down)'}"></span>
       </div>
-      <div class="meta">
-        <span><span class="lab">距止损</span><b class="neg">${sign(toSL)}%</b></span>
-        <span><span class="lab">距止盈</span><b class="pos">${sign(toTP)}%</b></span>
-        <span><span class="lab">浮盈</span><b class="${pnl>=0?'pos':'neg'}">${sign(pnl)} U</b></span>
-      </div></div>`;
+      <div class="meta">${bottom}</div></div>`;
   }).join('') || '<div class="foot">无监控标的</div>';
 }
 

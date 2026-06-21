@@ -151,7 +151,8 @@ def build_plan():
             sl, tp = round_down(price * (1 - SL), pp["price_prec"]), round_down(price * (1 + TP), pp["price_prec"])
         else:
             sl, tp = round_down(price * (1 + SL), pp["price_prec"]), round_down(price * (1 - TP), pp["price_prec"])
-        pos.append({"symbol": sym, "entry": price, "qty": qty, "sl": sl, "tp": tp, "chg24": g["chg"]})
+        pos.append({"symbol": sym, "entry": price, "qty": qty, "sl": sl, "tp": tp, "chg24": g["chg"],
+                    "closed": False, "exit": None, "reason": None, "exit_ts": None})
     return {"side": SIDE, "capital": CAPITAL, "sl": SL, "tp": TP, "top": TOP,
             "notional_each": round(notional, 2), "frozen_at": int(time.time() * 1000), "positions": pos}
 
@@ -160,23 +161,45 @@ def mark_prices(symbols):
     return {d["symbol"]: float(d["markPrice"]) for d in client.premium_index() if d["symbol"] in symbols}
 
 
-def compute_pnl(plan, px):
-    dr = 1 if plan["side"] == "long" else -1
-    tot_pnl = tot_notional = 0.0
-    hit = 0
+def apply_triggers(plan, px):
+    """锁定触发: 标记价一旦触到止损/止盈, 永久平仓, 盈亏定格在触发价 (模拟 STOP_MARKET 成交)。
+    单调状态: closed 一旦为 True 不再翻回。需在 _lock 内调用 (会原地改 plan)。"""
+    now = int(time.time() * 1000)
     for p in plan["positions"]:
+        if p.get("closed"):
+            continue
         cur = px.get(p["symbol"])
         if cur is None:
             continue
-        tot_pnl += p["qty"] * (cur - p["entry"]) * dr
-        tot_notional += p["qty"] * p["entry"]
+        reason = exit_px = None
         if plan["side"] == "long":
-            if cur <= p["sl"] or cur >= p["tp"]:
-                hit += 1
+            if cur <= p["sl"]:
+                reason, exit_px = "SL", p["sl"]
+            elif cur >= p["tp"]:
+                reason, exit_px = "TP", p["tp"]
         else:
-            if cur >= p["sl"] or cur <= p["tp"]:
-                hit += 1
-    return tot_pnl, tot_notional, hit
+            if cur >= p["sl"]:
+                reason, exit_px = "SL", p["sl"]
+            elif cur <= p["tp"]:
+                reason, exit_px = "TP", p["tp"]
+        if reason:
+            p.update(closed=True, exit=exit_px, reason=reason, exit_ts=now)
+
+
+def compute_pnl(plan, px):
+    dr = 1 if plan["side"] == "long" else -1
+    tot_pnl = tot_notional = 0.0
+    closed = 0
+    for p in plan["positions"]:
+        # 已平仓: 盈亏定格在出场价; 持仓中: 用实时标记价
+        price = p["exit"] if p.get("closed") else px.get(p["symbol"])
+        if price is None:
+            continue
+        tot_pnl += p["qty"] * (price - p["entry"]) * dr
+        tot_notional += p["qty"] * p["entry"]
+        if p.get("closed"):
+            closed += 1
+    return tot_pnl, tot_notional, closed
 
 
 def sample_loop():
@@ -196,7 +219,9 @@ def sample_loop():
         try:
             syms = {p["symbol"] for p in PLAN["positions"]}
             px = mark_prices(syms) if syms else {}
-            pnl, notional, hit = compute_pnl(PLAN, px)
+            with _lock:
+                apply_triggers(PLAN, px)          # 锁定触发(单调), 再算盈亏
+                pnl, notional, hit = compute_pnl(PLAN, px)
             con = db()
             with _lock:
                 con.execute("INSERT INTO samples(snapshot_id,ts,total_pnl,total_notional,hit,prices_json) VALUES(?,?,?,?,?,?)",
@@ -247,11 +272,12 @@ class Handler(BaseHTTPRequestHandler):
                             "low": float(k[3]), "close": float(k[4]), "volume": float(k[5])} for k in kl]
                 return self._json({"symbol": sym, "interval": interval, "candles": candles})
             if path == "/api/monitor":
-                with _lock:
-                    plan = dict(PLAN)
-                syms = {p["symbol"] for p in plan["positions"]}
+                syms = {p["symbol"] for p in PLAN["positions"]}
                 px = mark_prices(syms) if syms else {}
-                pnl, notional, hit = compute_pnl(plan, px)
+                with _lock:
+                    apply_triggers(PLAN, px)      # 读时也锁定触发(单调)
+                    pnl, notional, hit = compute_pnl(PLAN, px)
+                    plan = json.loads(json.dumps(PLAN))   # 深拷贝快照返回
                 return self._json({"plan": plan, "prices": px, "now": int(time.time() * 1000),
                                    "summary": {"total_pnl": round(pnl, 4), "total_notional": round(notional, 2), "hit": hit},
                                    "snapshot_id": SNAPSHOT_ID, "sample_sec": SAMPLE_SEC})

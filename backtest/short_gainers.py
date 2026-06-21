@@ -100,7 +100,7 @@ def fetch_klines(symbol, start_ms, end_ms):
         if not data:
             break
         for k in data:
-            out[int(k[0])] = (float(k[4]), float(k[2]), float(k[3]))  # close, high, low
+            out[int(k[0])] = (float(k[4]), float(k[2]), float(k[3]), float(k[7]))  # close,high,low,quoteVol
         nxt = int(data[-1][0]) + HOUR_MS
         if nxt <= cur:
             break
@@ -134,14 +134,14 @@ def funding_between(funding, lo, hi):
     return sum(r for ts, r in funding if lo < ts <= hi)
 
 
-def load_data(days, universe, hours):
-    """抓一次数据, 供多个配置共用。"""
+def load_data(days, candidates, hours):
+    """抓一次候选集数据 (成交额前 candidates), 供多个配置共用。"""
     end_ms = int(time.time() * 1000) // HOUR_MS * HOUR_MS
     start_ms = end_ms - days * DAY_MS
     hold_ms = hours * HOUR_MS
-    print(f"[数据] 标的池(成交额前 {universe})...", file=sys.stderr)
-    uni = select_universe(universe)
-    print(f"[数据] 抓 {days}天 1h OHLC + 资金费率 ({len(uni)} 标的)...", file=sys.stderr)
+    print(f"[数据] 候选集(成交额前 {candidates})...", file=sys.stderr)
+    uni = select_universe(candidates)   # 按当前成交额降序
+    print(f"[数据] 抓 {days}天 1h OHLCV + 资金费率 ({len(uni)} 标的)...", file=sys.stderr)
     prices, funding = {}, {}
     for i, sym in enumerate(uni, 1):
         try:
@@ -152,15 +152,35 @@ def load_data(days, universe, hours):
             funding[sym] = fetch_funding(sym, start_ms, end_ms)
         except Exception as e:
             print(f"      ! {sym} 跳过: {e}", file=sys.stderr)
-        if i % 30 == 0:
+        if i % 50 == 0:
             print(f"      {i}/{len(uni)}", file=sys.stderr)
-        time.sleep(0.05)
-    syms = [s for s in uni if s in prices]
+        time.sleep(0.04)
+    syms = [s for s in uni if s in prices]   # 候选(成交额降序)
     rebal_times = list(range(start_ms + DAY_MS, end_ms - hold_ms + 1, hold_ms))
-    print(f"[数据] 有效标的 {len(syms)}, 调仓周期 {len(rebal_times)}", file=sys.stderr)
+    print(f"[数据] 候选有效 {len(syms)}, 调仓周期 {len(rebal_times)}", file=sys.stderr)
     return {"syms": syms, "prices": prices, "funding": funding,
             "rebal_times": rebal_times, "start_ms": start_ms, "end_ms": end_ms,
-            "days": days, "universe_requested": universe, "hours": hours}
+            "days": days, "candidates_requested": candidates, "hours": hours}
+
+
+def dynamic_universe(data, nsel):
+    """时点动态池: 每个调仓点按"截至当时的滚动 24h 成交额"取前 nsel。
+    返回 {t: [symbol,...]}。消除"用今天成交额选过去标的"的前视偏差。"""
+    prices, rebal = data["prices"], data["rebal_times"]
+    out = {}
+    for t in rebal:
+        vs = []
+        for s, bars in prices.items():
+            tv = 0.0
+            for k in range(24):                      # 最近 24 根 1h K线的成交额
+                x = bars.get(t - k * HOUR_MS)
+                if x:
+                    tv += x[3]
+            if tv > 0 and bars.get(t):
+                vs.append((s, tv))
+        vs.sort(key=lambda r: r[1], reverse=True)
+        out[t] = [s for s, _ in vs[:nsel]]
+    return out
 
 
 # ----------------------------- 离场 + 模拟 -----------------------------
@@ -170,7 +190,7 @@ def simulate_hold(bars, t, entry, hold_ms, sl_level, tp_level, side):
     while h <= end:
         bar = bars.get(h)
         if bar:
-            _, hi, lo = bar
+            _, hi, lo, _ = bar
             if side == "short":
                 if hi >= sl_level:
                     return sl_level, h, "SL"
@@ -188,10 +208,14 @@ def simulate_hold(bars, t, entry, hold_ms, sl_level, tp_level, side):
     return None, None, None
 
 
-def run_config(data, side, top, stop_loss, take_profit, fee, capital):
+def run_config(data, side, top, stop_loss, take_profit, fee, capital,
+               nsel=120, dyn_univ=None):
+    """dyn_univ: 时点动态池 {t:[symbols]} (来自 dynamic_universe); None=固定池(候选前 nsel)。"""
     syms, prices, funding = data["syms"], data["prices"], data["funding"]
     rebal_times, hours = data["rebal_times"], data["hours"]
     hold_ms = hours * HOUR_MS
+    fixed_univ = syms[:nsel]            # 固定池 = 候选(当前成交额)前 nsel
+    is_dynamic = dyn_univ is not None
 
     def close_at(sym, t):
         b = prices[sym].get(t)
@@ -206,7 +230,8 @@ def run_config(data, side, top, stop_loss, take_profit, fee, capital):
     for t in rebal_times:
         ranked = []
         t24 = t - DAY_MS
-        for sym in syms:
+        universe = dyn_univ[t] if is_dynamic else fixed_univ
+        for sym in universe:
             p_now = close_at(sym, t)
             p_old = close_at(sym, t24)
             if p_now and p_old and p_old > 0:
@@ -283,17 +308,20 @@ def run_config(data, side, top, stop_loss, take_profit, fee, capital):
     win_rate = wins / n_eff if n_eff else 0.0
     n_legs = sum(reason_count.values())
     side_cn = "做多" if side == "long" else "做空"
+    umode = "动态池" if is_dynamic else "固定池"
 
     return {
         "meta": {
             "id": run_id(side, stop_loss, take_profit),
             "label": f"{side_cn} · 止损{stop_loss:.0%}/止盈{take_profit:.0%}",
-            "strategy": f"每{hours}h{side_cn}24h涨幅榜前{top} · 止损{stop_loss:.0%}/止盈{take_profit:.0%}",
+            "strategy": f"每{hours}h{side_cn}24h涨幅榜前{top} · 止损{stop_loss:.0%}/止盈{take_profit:.0%} · {umode}",
             "side": side, "generated_at": int(time.time() * 1000),
             "days": data["days"], "rebalance_hours": hours, "top_n": top,
             "stop_loss": stop_loss, "take_profit": take_profit,
-            "universe_requested": data["universe_requested"],
-            "universe_effective": len(syms), "fee_rate": fee, "start_equity": cap,
+            "universe_mode": "dynamic" if is_dynamic else "fixed",
+            "candidates_effective": len(syms),
+            "universe_requested": nsel,
+            "universe_effective": nsel, "fee_rate": fee, "start_equity": cap,
             "period_start": rebal_times[0] if rebal_times else data["start_ms"],
             "period_end": rebal_times[-1] if rebal_times else data["end_ms"],
         },
@@ -343,6 +371,7 @@ def update_manifest(results):
             "take_profit": m["take_profit"], "rebalance_hours": m["rebalance_hours"],
             "top_n": m["top_n"], "days": m["days"],
             "universe_effective": m["universe_effective"],
+            "universe_mode": m.get("universe_mode", "fixed"),
             "generated_at": m["generated_at"], "start_equity": m["start_equity"],
             "period_start": m["period_start"], "period_end": m["period_end"],
             "final_equity": s["final_equity"], "total_return_pct": s["total_return_pct"],
@@ -363,7 +392,8 @@ def update_manifest(results):
 def main(argv=None):
     p = argparse.ArgumentParser(description="涨幅榜多空回测 (止损/止盈, 多 run)")
     p.add_argument("--days", type=int, default=45)
-    p.add_argument("--universe", type=int, default=120)
+    p.add_argument("--universe", type=int, default=120, help="实际交易的池子大小 (选前N)")
+    p.add_argument("--candidates", type=int, default=400, help="抓取的候选集 (动态池从中按时点成交额选)")
     p.add_argument("--top", type=int, default=5)
     p.add_argument("--side", choices=["short", "long"], default="short")
     p.add_argument("--hours", type=int, default=6)
@@ -372,15 +402,23 @@ def main(argv=None):
     p.add_argument("--fee", type=float, default=0.0005)
     p.add_argument("--capital", type=float, default=10000)
     p.add_argument("--batch", action="store_true", help="跑预设矩阵 (一次抓数多配置)")
+    p.add_argument("--fixed-universe", action="store_true",
+                   help="用固定池(当下成交额前N, 含前视偏差); 默认时点动态池")
     args = p.parse_args(argv)
 
-    data = load_data(args.days, args.universe, args.hours)
+    # 动态池(默认)抓候选集; 固定池只需抓 universe 个
+    cand = args.universe if args.fixed_universe else max(args.candidates, args.universe)
+    data = load_data(args.days, cand, args.hours)
+    dyn = None if args.fixed_universe else dynamic_universe(data, args.universe)
+    if not args.fixed_universe:
+        print(f"[池] 时点动态池: 候选{len(data['syms'])} → 每期按滚动24h成交额选前{args.universe}", file=sys.stderr)
     configs = PRESETS if args.batch else [(args.side, args.stop_loss, args.take_profit)]
 
     results = []
     for side, sl, tp in configs:
         print(f"[模拟] {side} 止损{sl:.0%}/止盈{tp:.0%}...", file=sys.stderr)
-        res = run_config(data, side, args.top, sl, tp, args.fee, args.capital)
+        res = run_config(data, side, args.top, sl, tp, args.fee, args.capital,
+                         nsel=args.universe, dyn_univ=dyn)
         write_run(res)
         results.append(res)
         s = res["summary"]

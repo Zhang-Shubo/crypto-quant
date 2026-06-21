@@ -73,6 +73,22 @@ const g=n=>{const a=Math.abs(n);const d=a>=100?2:a>=1?4:6;return Number(n).toPre
 const vol=v=>v>=1e9?(v/1e9).toFixed(2)+'B':v>=1e6?(v/1e6).toFixed(1)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
 const hhmmss=ms=>{const d=new Date(ms);const p=x=>String(x).padStart(2,'0');return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;};
 
+// 自适应价格精度算法: 综合"价格量级"与"波动区间", 取够清晰的小数位; tickSize 仅作下限(不显示比真实刻度更细)
+function adaptivePrice(candles, tickSize){
+  if(!candles||!candles.length) return {precision:2,minMove:0.01};
+  const closes=candles.map(c=>c.close);
+  const ref=closes[closes.length-1]||closes[0]||1;
+  const lo=Math.min(...candles.map(c=>c.low)), hi=Math.max(...candles.map(c=>c.high));
+  const span=(hi>lo)?(hi-lo):Math.abs(ref);
+  const flog=x=>(x>0?Math.floor(Math.log10(x)):0);
+  // 价格量级给 ~5 位有效数字; 波动区间保证能分出 ~1000 格 (避免小波动看不清)
+  let prec=Math.max(4-flog(ref), 3-flog(span));
+  prec=Math.max(0,Math.min(8,prec));
+  let minMove=Math.pow(10,-prec);
+  if(tickSize&&tickSize>minMove){ minMove=tickSize; prec=Math.max(0,Math.round(-Math.log10(tickSize))); }
+  return {precision:prec,minMove:minMove};
+}
+
 let win='24h', order='desc', curSym=null, curIv='1h';
 
 async function loadBoard(){
@@ -120,17 +136,16 @@ async function selectSym(sym){
   try{
     const r=await fetch(`./api/klines?symbol=${sym}&interval=${curIv}&limit=200`,{cache:'no-store'});
     const d=await r.json();
-    // 价格轴最小刻度按该合约真实 tickSize 自适应 (避免 0.01 默认刻度把小价币压扁)
-    const pp=(d.price_precision!=null)?d.price_precision:2;
-    const mm=(d.tick_size&&d.tick_size>0)?d.tick_size:Math.pow(10,-pp);
-    series.applyOptions({priceFormat:{type:'price',precision:pp,minMove:mm}});
+    // 自适应价格精度: 由当前数据的价格量级 + 波动区间动态决定小数位 (不绑死交易所 tickSize)
+    const fmtp=adaptivePrice(d.candles, d.tick_size);
+    series.applyOptions({priceFormat:{type:'price',precision:fmtp.precision,minMove:fmtp.minMove}});
     series.setData(d.candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
     chart.timeScale().fitContent();
     const last=d.candles[d.candles.length-1], first=d.candles[0];
     const chg=(last.close/first.open-1)*100;
     document.getElementById('khead').innerHTML=
       `<span class="ksym">${sym}</span>`+
-      `<span class="kprice">${Number(last.close).toFixed(Math.min(pp,8))}</span>`+
+      `<span class="kprice">${Number(last.close).toFixed(fmtp.precision)}</span>`+
       `<span class="${chg>=0?'pos':'neg'} mono">${chg>=0?'+':''}${fmt(chg)}% (${curIv}×${d.candles.length})</span>`;
   }catch(e){ document.getElementById('kempty').style.display='flex';
     document.getElementById('kempty').textContent='K线加载失败'; }

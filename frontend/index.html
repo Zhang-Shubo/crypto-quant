@@ -93,7 +93,7 @@
     <div class="cyc-meta" id="cycMeta"></div>
     <table>
       <thead><tr>
-        <th>做空标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>离场</th><th>本仓盈亏(含资金费)</th>
+        <th id="thSide">标的</th><th>入场时24h涨幅</th><th>入场价</th><th>出场价</th><th>离场</th><th>本仓盈亏(含资金费)</th>
       </tr></thead>
       <tbody id="cycRows"></tbody>
     </table>
@@ -113,22 +113,28 @@ const tdateY = ms => { const d=new Date(ms); return `${d.getFullYear()}-${tdate(
 
 /* ---------- 头部 / 指标 ---------- */
 const M=R.meta, S=R.summary;
+const SIDE = M.side==='long' ? '做多' : '做空';
+const MOM = M.side==='long' ? '顺动量' : '逆动量';
 const slTxt = M.stop_loss!=null ? `止损${(M.stop_loss*100).toFixed(0)}% · 止盈${(M.take_profit*100).toFixed(0)}%` : '';
 document.getElementById('tagStrat').textContent =
-  `top${M.top_n} · 每${M.rebalance_hours}h · ${slTxt} · fee ${(M.fee_rate*100).toFixed(3)}%`;
+  `${SIDE}top${M.top_n} · 每${M.rebalance_hours}h · ${slTxt} · fee ${(M.fee_rate*100).toFixed(3)}%`;
 document.getElementById('tagPeriod').textContent =
   `${tdateY(M.period_start)} → ${tdateY(M.period_end)} · 标的池 ${M.universe_effective} · ${M.days}天`;
+document.getElementById('thSide').textContent = `${SIDE}标的`;
 
 const ex = S.exits || {};
 const exLine = S.exit_sl_pct!=null
   ? `离场构成：止损 <b class="neg">${S.exit_sl_pct}%</b>（${ex.SL}）· 止盈 <b class="pos">${S.exit_tp_pct}%</b>（${ex.TP}）· 到时间 <b>${S.exit_time_pct}%</b>（${ex.TIME}）。`
   : '';
+const win = S.total_return_pct >= 0;
+const concl = win
+  ? `${MOM}方向在样本期录得 <b class="pos">正收益</b>——但需更长样本与基准对比才能确认 edge 稳健。`
+  : `${MOM}方向在样本期仍为 <b class="neg">亏损</b>，止损止盈只截断单笔极端、未扭转方向本身。`;
 document.getElementById('verdict').innerHTML =
-  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权做空 24h 涨幅榜前 ${M.top_n}`+
+  `初始 <b class="mono">${fmt(M.start_equity,0)}</b> USDT，每 ${M.rebalance_hours} 小时等权${SIDE} 24h 涨幅榜前 ${M.top_n}`+
   (slTxt?`，单仓 ${slTxt}、未触发到时间平仓`:'')+`。`+
   `${S.num_cycles} 个周期后净值 <b class="mono">${fmt(S.final_equity)}</b>，总收益 `+
-  `<b class="mono">${S.total_return_pct}%</b>。<br/>${exLine}`+
-  `止盈 50% 在 6h 内极难触发，做空暴涨币则频繁打到止损——止损止盈截断了单笔灾难，却没能扭转<b>逆动量的负 edge</b>。`;
+  `<b class="mono ${win?'pos':'neg'}">${S.total_return_pct}%</b>。<br/>${exLine}${concl}`;
 
 const metricDefs = [
   ['期末净值', fmt(S.final_equity), S.final_equity>=M.start_equity?'pos':'neg'],

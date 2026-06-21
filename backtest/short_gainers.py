@@ -136,10 +136,10 @@ def funding_between(funding: list[tuple[int, float]], lo: int, hi: int) -> float
 
 # ----------------------------- 离场模拟 -----------------------------
 def simulate_hold(bars: dict[int, tuple], t: int, entry: float,
-                  hold_ms: int, sl_level: float, tp_level: float):
-    """逐根 1h K线判定做空仓位的离场。返回 (exit_price, exit_time, reason)。
-    sl_level = entry*(1+stop_loss)  价格涨到此 → 止损
-    tp_level = entry*(1-take_profit) 价格跌到此 → 止盈
+                  hold_ms: int, sl_level: float, tp_level: float, side: str):
+    """逐根 1h K线判定仓位离场。返回 (exit_price, exit_time, reason)。
+    short: sl_level=entry*(1+sl) 价格涨到此止损; tp_level=entry*(1-tp) 价格跌到此止盈。
+    long : sl_level=entry*(1-sl) 价格跌到此止损; tp_level=entry*(1+tp) 价格涨到此止盈。
     同根都触发时保守按止损先成交。无数据返回 (None,None,None)。
     """
     h = t + HOUR_MS
@@ -148,12 +148,16 @@ def simulate_hold(bars: dict[int, tuple], t: int, entry: float,
         bar = bars.get(h)
         if bar:
             _, hi, lo = bar
-            hit_sl = hi >= sl_level
-            hit_tp = lo <= tp_level
-            if hit_sl:                       # 止损优先 (保守)
-                return sl_level, h, "SL"
-            if hit_tp:
-                return tp_level, h, "TP"
+            if side == "short":
+                if hi >= sl_level:           # 价格上涨 → 止损 (保守优先)
+                    return sl_level, h, "SL"
+                if lo <= tp_level:           # 价格下跌 → 止盈
+                    return tp_level, h, "TP"
+            else:                            # long
+                if lo <= sl_level:           # 价格下跌 → 止损 (保守优先)
+                    return sl_level, h, "SL"
+                if hi >= tp_level:           # 价格上涨 → 止盈
+                    return tp_level, h, "TP"
         h += HOUR_MS
     end_bar = bars.get(end)
     if end_bar:
@@ -222,16 +226,25 @@ def run_backtest(args) -> dict:
         for sym, ret24, entry in picks:
             if not entry or entry <= 0:
                 continue
-            sl_level = entry * (1 + args.stop_loss)
-            tp_level = entry * (1 - args.take_profit)
+            if args.side == "short":
+                sl_level = entry * (1 + args.stop_loss)
+                tp_level = entry * (1 - args.take_profit)
+            else:  # long
+                sl_level = entry * (1 - args.stop_loss)
+                tp_level = entry * (1 + args.take_profit)
             exit_p, exit_t, reason = simulate_hold(
-                prices[sym], t, entry, hold_ms, sl_level, tp_level)
+                prices[sym], t, entry, hold_ms, sl_level, tp_level, args.side)
             if exit_p is None:
                 reason_count["NA"] += 1
                 continue
             reason_count[reason] += 1
-            price_pnl = notional * (entry - exit_p) / entry        # 空头
-            fund = notional * funding_between(funding[sym], t, exit_t)
+            fsum = funding_between(funding[sym], t, exit_t)
+            if args.side == "short":
+                price_pnl = notional * (entry - exit_p) / entry    # 空头: 价格跌则赚
+                fund = notional * fsum                              # 费率>0 空头收取
+            else:
+                price_pnl = notional * (exit_p - entry) / entry    # 多头: 价格涨则赚
+                fund = -notional * fsum                             # 费率>0 多头支付
             f_open = fee * notional
             f_close = fee * notional * (exit_p / entry)
             leg_fee = f_open + f_close
@@ -296,7 +309,8 @@ def run_backtest(args) -> dict:
     return {
         "meta": {
             "generated_at": int(time.time() * 1000),
-            "strategy": f"每{args.hours}h做空24h涨幅榜前{args.top} · 止损{args.stop_loss:.0%}/止盈{args.take_profit:.0%}",
+            "strategy": f"每{args.hours}h{'做多' if args.side=='long' else '做空'}24h涨幅榜前{args.top} · 止损{args.stop_loss:.0%}/止盈{args.take_profit:.0%}",
+            "side": args.side,
             "days": args.days,
             "rebalance_hours": args.hours,
             "top_n": args.top,
@@ -335,6 +349,8 @@ def main(argv=None) -> int:
     p.add_argument("--days", type=int, default=45)
     p.add_argument("--universe", type=int, default=120)
     p.add_argument("--top", type=int, default=5)
+    p.add_argument("--side", choices=["short", "long"], default="short",
+                   help="做空(short)还是做多(long)涨幅榜, 默认 short")
     p.add_argument("--hours", type=int, default=6, help="调仓/最大持仓周期(小时)")
     p.add_argument("--stop-loss", type=float, default=0.10, help="止损 (仓位亏损比例, 默认0.10)")
     p.add_argument("--take-profit", type=float, default=0.50, help="止盈 (仓位盈利比例, 默认0.50)")

@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""涨幅榜多空策略回测 (Gainers Momentum / Reversion) + 止损/止盈。
+"""涨幅榜多空策略回测引擎 (Gainers Momentum / Reversion) + 止损/止盈。
 
 策略
 ----
@@ -13,36 +12,27 @@
 - 成本: taker 手续费逐笔开平; 资金费每 8h 结算, 仅持仓期间累计
   (short 费率>0 收取; long 费率>0 支付)。离场后资金闲置到下次调仓。
 
-多 run 产出
------------
-每个 (side, 止损, 止盈) 组合是一个 run, 写入:
-    frontend/runs/<id>.json     单个 run 完整结果 (供 run.html?id=<id>)
-    frontend/runs/manifest.json 所有 run 的汇总索引 (供主页 index.html)
-    backtest/results.json       最近一个 run (程序消费/兼容)
+时点动态池 (默认)
+-----------------
+每个调仓点按"截至当时的滚动 24h 成交额"取前 N, 消除"用今天成交额选过去标的"
+的前视偏差。--fixed-universe 可退回固定池 (当下成交额前 N, 含前视偏差)。
 
-用法:
-    python3 backtest/short_gainers.py --side long --stop-loss 0.2 --take-profit 0.5
-    python3 backtest/short_gainers.py --batch          # 一次抓数, 跑预设矩阵
-仅依赖标准库 (需直连 fapi.binance.com)。
+产出 (写入 frontend/runs/ + data/)
+----------------------------------
+    frontend/runs/<id>.json     单个 run 完整结果 (供 run.html?id=<id>)
+    frontend/runs/manifest.json 所有 run 的汇总索引 (供 backtest.html)
+    data/last_run.json          最近一个 run (调试/兼容)
 """
 from __future__ import annotations
 
-import argparse
 import json
 import os
+import statistics
 import sys
 import time
-import urllib.parse
-import urllib.request
-import urllib.error
 
-FAPI = "https://fapi.binance.com"
-HOUR_MS = 3_600_000
-DAY_MS = 24 * HOUR_MS
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-RUNS_DIR = os.path.join(ROOT, "frontend", "runs")
+from ..config import HOUR_MS, DAY_MS, RUNS_DIR, LAST_RUN_PATH
+from ..exchange import select_universe, fetch_klines, fetch_funding, funding_between
 
 # 预设矩阵: (side, stop_loss, take_profit)
 PRESETS = [
@@ -53,87 +43,7 @@ PRESETS = [
 ]
 
 
-# ----------------------------- HTTP -----------------------------
-def get_json(path, params=None, timeout=20, retries=4):
-    url = f"{FAPI}{path}"
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    last = None
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "crypto-quant/0.1"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            last = e
-            if e.code == 429:
-                time.sleep(2 * (attempt + 1)); continue
-            if e.code in (418, 451):
-                raise
-            time.sleep(0.5 * (attempt + 1))
-        except (urllib.error.URLError, TimeoutError) as e:
-            last = e
-            time.sleep(0.5 * (attempt + 1))
-    raise RuntimeError(f"请求失败 {path}: {last}")
-
-
 # ----------------------------- 数据抓取 -----------------------------
-def select_universe(n):
-    info = get_json("/fapi/v1/exchangeInfo")
-    perp = {s["symbol"] for s in info["symbols"]
-            if s.get("contractType") == "PERPETUAL"
-            and s.get("status") == "TRADING"
-            and s.get("quoteAsset") == "USDT"}
-    tickers = get_json("/fapi/v1/ticker/24hr")
-    rows = [t for t in tickers if t["symbol"] in perp]
-    rows.sort(key=lambda t: float(t.get("quoteVolume", 0)), reverse=True)
-    return [t["symbol"] for t in rows[:n]]
-
-
-def fetch_klines(symbol, start_ms, end_ms):
-    out = {}
-    cur = start_ms
-    while cur < end_ms:
-        data = get_json("/fapi/v1/klines",
-                        {"symbol": symbol, "interval": "1h", "startTime": cur,
-                         "endTime": end_ms, "limit": 1500})
-        if not data:
-            break
-        for k in data:
-            out[int(k[0])] = (float(k[4]), float(k[2]), float(k[3]), float(k[7]))  # close,high,low,quoteVol
-        nxt = int(data[-1][0]) + HOUR_MS
-        if nxt <= cur:
-            break
-        cur = nxt
-        if len(data) < 1500:
-            break
-    return out
-
-
-def fetch_funding(symbol, start_ms, end_ms):
-    out = []
-    cur = start_ms
-    while cur < end_ms:
-        data = get_json("/fapi/v1/fundingRate",
-                        {"symbol": symbol, "startTime": cur, "endTime": end_ms, "limit": 1000})
-        if not data:
-            break
-        for d in data:
-            out.append((int(d["fundingTime"]), float(d["fundingRate"])))
-        nxt = int(data[-1]["fundingTime"]) + 1
-        if nxt <= cur:
-            break
-        cur = nxt
-        if len(data) < 1000:
-            break
-    out.sort()
-    return out
-
-
-def funding_between(funding, lo, hi):
-    return sum(r for ts, r in funding if lo < ts <= hi)
-
-
 def load_data(days, candidates, hours):
     """抓一次候选集数据 (成交额前 candidates), 供多个配置共用。"""
     end_ms = int(time.time() * 1000) // HOUR_MS * HOUR_MS
@@ -297,7 +207,6 @@ def run_config(data, side, top, stop_loss, take_profit, fee, capital,
         peak = max(peak, c["equity"])
         if peak > 0:
             max_dd = min(max_dd, c["equity"] / peak - 1.0)
-    import statistics
     if len(cycle_rets) > 1 and statistics.pstdev(cycle_rets) > 0:
         cpy = 365 * 24 / hours
         sharpe = (statistics.fmean(cycle_rets) / statistics.pstdev(cycle_rets)) * (cpy ** 0.5)
@@ -389,51 +298,8 @@ def update_manifest(results):
     return runs
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description="涨幅榜多空回测 (止损/止盈, 多 run)")
-    p.add_argument("--days", type=int, default=45)
-    p.add_argument("--universe", type=int, default=120, help="实际交易的池子大小 (选前N)")
-    p.add_argument("--candidates", type=int, default=400, help="抓取的候选集 (动态池从中按时点成交额选)")
-    p.add_argument("--top", type=int, default=5)
-    p.add_argument("--side", choices=["short", "long"], default="short")
-    p.add_argument("--hours", type=int, default=6)
-    p.add_argument("--stop-loss", type=float, default=0.10)
-    p.add_argument("--take-profit", type=float, default=0.50)
-    p.add_argument("--fee", type=float, default=0.0005)
-    p.add_argument("--capital", type=float, default=10000)
-    p.add_argument("--batch", action="store_true", help="跑预设矩阵 (一次抓数多配置)")
-    p.add_argument("--fixed-universe", action="store_true",
-                   help="用固定池(当下成交额前N, 含前视偏差); 默认时点动态池")
-    args = p.parse_args(argv)
-
-    # 动态池(默认)抓候选集; 固定池只需抓 universe 个
-    cand = args.universe if args.fixed_universe else max(args.candidates, args.universe)
-    data = load_data(args.days, cand, args.hours)
-    dyn = None if args.fixed_universe else dynamic_universe(data, args.universe)
-    if not args.fixed_universe:
-        print(f"[池] 时点动态池: 候选{len(data['syms'])} → 每期按滚动24h成交额选前{args.universe}", file=sys.stderr)
-    configs = PRESETS if args.batch else [(args.side, args.stop_loss, args.take_profit)]
-
-    results = []
-    for side, sl, tp in configs:
-        print(f"[模拟] {side} 止损{sl:.0%}/止盈{tp:.0%}...", file=sys.stderr)
-        res = run_config(data, side, args.top, sl, tp, args.fee, args.capital,
-                         nsel=args.universe, dyn_univ=dyn)
-        write_run(res)
-        results.append(res)
-        s = res["summary"]
-        print(f"        → 净值 {s['final_equity']} ({s['total_return_pct']:+}%) "
-              f"DD {s['max_drawdown_pct']}% 夏普 {s['sharpe']} 胜率 {s['win_rate_pct']}% "
-              f"[SL{s['exit_sl_pct']}/TP{s['exit_tp_pct']}/TIME{s['exit_time_pct']}]", file=sys.stderr)
-
-    runs = update_manifest(results)
-    with open(os.path.join(HERE, "results.json"), "w", encoding="utf-8") as f:
-        json.dump(results[-1], f, ensure_ascii=False, separators=(",", ":"))
-
-    print(f"\n[完成] {len(results)} 个 run 已写出, manifest 共 {len(runs)} 个 run", file=sys.stderr)
-    print(f"        {RUNS_DIR}/", file=sys.stderr)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def write_last_run(result):
+    """末次 run 落 data/last_run.json (gitignored, 调试/兼容用)。"""
+    os.makedirs(os.path.dirname(LAST_RUN_PATH), exist_ok=True)
+    with open(LAST_RUN_PATH, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, separators=(",", ":"))

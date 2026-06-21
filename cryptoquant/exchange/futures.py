@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Binance USDⓈ-M 合约 REST 客户端 (签名版, 仅标准库)。
 
 支持 testnet (默认) 与实盘切换。鉴权: API Key 放 X-MBX-APIKEY 头,
@@ -21,8 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-LIVE_BASE = "https://fapi.binance.com"
-TEST_BASE = "https://testnet.binancefuture.com"
+from ..config import FAPI_BASE, TESTNET_BASE
 
 
 class BinanceFutures:
@@ -31,7 +29,7 @@ class BinanceFutures:
         sec = secret if secret is not None else os.environ.get("BINANCE_SECRET", "")
         self.secret = sec.encode()
         self.testnet = testnet
-        self.base = TEST_BASE if testnet else LIVE_BASE
+        self.base = TESTNET_BASE if testnet else FAPI_BASE
         self.recv = recv_window
         self.timeout = timeout
 
@@ -92,7 +90,7 @@ class BinanceFutures:
         return self._request("GET", "/fapi/v1/premiumIndex")
 
     def precision_map(self) -> dict:
-        """{symbol: {qty_prec, price_prec, min_notional}}。"""
+        """{symbol: {qty_prec, price_prec, tick_size, min_notional}}。"""
         info = self.exchange_info()
         out = {}
         for s in info["symbols"]:
@@ -153,7 +151,7 @@ class BinanceFutures:
                               stopPrice=stop_price, closePosition="true", workingType="MARK_PRICE")
 
 
-def _selftest_signature():
+def selftest_signature() -> bool:
     """双重校验签名实现:
     1) RFC 标准 HMAC-SHA256 向量 (验证 HMAC 本身)。
     2) Binance 文档示例查询串 (验证参数串拼接顺序 + 签名)。
@@ -177,4 +175,4 @@ def _selftest_signature():
 
 
 if __name__ == "__main__":
-    _selftest_signature()
+    selftest_signature()

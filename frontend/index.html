@@ -121,6 +121,8 @@ document.getElementById('tagStrat').textContent =
 document.getElementById('tagPeriod').textContent =
   `${tdateY(M.period_start)} → ${tdateY(M.period_end)} · 标的池 ${M.universe_effective} · ${M.days}天`;
 document.getElementById('thSide').textContent = `${SIDE}标的`;
+document.querySelector('h1').textContent = `${SIDE}涨幅榜 · 回测`;
+document.title = `${SIDE}涨幅榜 · 回测可视化`;
 
 const ex = S.exits || {};
 const exLine = S.exit_sl_pct!=null

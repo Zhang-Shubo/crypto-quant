@@ -133,7 +133,7 @@ async function loadHistory(){
       options:{responsive:true,maintainAspectRatio:false,animation:false,
         plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' 浮盈 '+sign(c.parsed.y)+' U'}}},
         scales:{x:{grid:{color:'#1a2230'},ticks:{maxTicksLimit:10,autoSkip:true}},
-          y:{grid:{color:'#1a2230'},ticks:{callback:v=>sign(v,1)}}}}
+          y:{grid:{color:'#1a2230'},ticks:{callback:v=>(v>=0?'+':'')+Number(v).toFixed(2)}}}}
     });
   }else{
     chart.data.labels=labels; chart.data.datasets[0].data=data; chart.update();

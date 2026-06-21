@@ -13,7 +13,8 @@ data/*.parquet
 *.sqlite
 
 # 回测生成产物 (每次跑回测都会重新生成, 不纳入版本控制, 避免 git pull 冲突)
-backtest/results.json
+data/last_run.json
+data/live.db
 frontend/data.js
 frontend/runs/
 

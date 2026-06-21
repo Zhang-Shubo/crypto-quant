@@ -1,72 +1,72 @@
 # crypto-quant
 
-加密货币量化研究项目。数据取自 Binance 公共接口（行情 / 永续合约 / 资金费率），抓取在能直连 Binance 的首尔服务器上跑。
+加密货币量化研究项目 —— **市场看板 · 策略回测 · 实时运行** 三合一。数据取自 Binance 公共行情
+与 USDⓈ-M 永续合约，围绕同一个策略族（**涨幅榜多空 + 止损/止盈**）打通数据、回测与实盘。
 
-## 模块
+> 仅依赖 Python 标准库（无需 `pip install`）。抓取需直连 Binance，跑在能直连的首尔服务器上。
+> ⚠️ 仅供研究演示，非投资建议。
+
+## 快速上手
+
+```bash
+# 1. 现货 24h 涨幅榜
+python3 -m cryptoquant.gainers --top 10
+
+# 2. 跑策略回测 (一次抓数, 预设矩阵) → 生成 frontend/runs/
+python3 -m cryptoquant.backtest --batch
+
+# 3. 起统一后端 (市场/回测/实时), 浏览器开 http://127.0.0.1:8800
+python3 -m cryptoquant.web
+
+# 4. 实盘执行器 (默认 testnet + dry-run, 只打印不下单)
+python3 -m cryptoquant.live
+```
+
+也可用 `make help` 查看快捷命令，`make test` 跑离线单测。
+
+## 三大模块
+
+| 模块 | 入口 | 说明 | 文档 |
+|------|------|------|------|
+| 市场看板 | `python3 -m cryptoquant.web` | 实时涨幅榜（1h/24h）+ 点选 K 线 | [web-api](docs/web-api.md) |
+| 策略回测 | `python3 -m cryptoquant.backtest` | 涨幅榜多空 + 止损/止盈，含资金费/手续费、时点动态池 | [backtest](docs/backtest.md) |
+| 实时运行 | `python3 -m cryptoquant.live` / Web | 单次实盘调仓执行器 + dry-run 监控采样 | [live-trading](docs/live-trading.md) |
+
+后端单进程整合三块：市场 API、回测静态产物、实时监控 API，并直接服务 `frontend/`。
+四个页面：市场 `index.html`、策略汇总 `backtest.html`、回测明细 `run.html?id=<id>`、实时 `live.html`。
+
+## 项目结构
 
 ```
 crypto-quant/
-├── data/
-│   └── binance_gainers.py     # Binance 24h 涨幅/跌幅榜 (现货, 标准库)
-├── backtest/
-│   ├── short_gainers.py       # 「做空涨幅榜」策略回测引擎 (含资金费+手续费)
-│   └── results.json           # 最近一次回测结果
-├── frontend/
-│   ├── index.html             # 回测可视化看板 (净值/盈亏拆解/交易回放)
-│   └── data.js                # 回测结果 (window.RESULTS, 供 file:// 直接打开)
-├── strategies/ execution/ utils/ tests/
-└── requirements.txt
+├── cryptoquant/              # 核心库 (可导入, 纯标准库)
+│   ├── config.py             #   集中配置: 路径 / endpoint / 常量 / MonitorConfig
+│   ├── exchange/             #   交易所 I/O
+│   │   ├── http.py           #     统一 GET-JSON + 重试
+│   │   ├── public.py         #     免签公共行情 (涨幅榜/K线/资金费/标的池)
+│   │   └── futures.py        #     签名版 USDⓈ-M 客户端
+│   ├── strategy/gainers.py   #   选标的 + 止损止盈价位 (纯逻辑, 易测)
+│   ├── backtest/             #   回测引擎 + CLI (-m cryptoquant.backtest)
+│   ├── live/                 #   executor 实盘执行 + monitor 监控采样
+│   ├── web/                  #   server 后端 + market 榜单缓存
+│   └── gainers.py            #   现货涨幅榜 CLI
+├── frontend/                 # 静态前端 (index/backtest/run/live + app.css)
+│   └── runs/                 #   回测产物 (gitignored)
+├── docs/                     # 架构 / 回测 / 实盘 / API / 部署 文档
+├── tests/                    # 离线单元测试 (无网络)
+├── data/                     # 运行期数据: live.db / last_run.json (gitignored)
+├── Makefile  .env.example  requirements.txt
 ```
 
-## 1. 涨幅榜接口 `data/binance_gainers.py`
+详见 [docs/architecture.md](docs/architecture.md)。
 
-调 `/api/v3/ticker/24hr`，过滤 USDT 现货（排除杠杆代币），按 24h 涨跌幅排序。
+## 部署
 
-```bash
-python3 data/binance_gainers.py            # 涨幅榜 Top 20
-python3 data/binance_gainers.py --top 5    # Top 5
-python3 data/binance_gainers.py --losers   # 跌幅榜
-python3 data/binance_gainers.py --json     # JSON 输出
-```
+服务器 `git pull --ff-only` 后跑 `python3 -m cryptoquant.backtest --batch` 刷新回测、
+`python3 -m cryptoquant.web` 起服务。凭证放仓库根 `.env`（从 `.env.example` 复制，已 gitignore）。
+完整步骤与旧命令迁移表见 [docs/deployment.md](docs/deployment.md)。
 
-## 2. 做空涨幅榜回测 `backtest/short_gainers.py`
+## 免责
 
-**策略**：每 6 小时，按「过去 24h 涨幅」排序，等权做空涨幅榜前 5（USDT 永续），持有 6h 后换仓。
-**成本建模**：taker 手续费按换手名义收取；资金费每 8h 结算，费率为正时空头收取、为负时空头支付。
-
-```bash
-python3 backtest/short_gainers.py                          # 默认: 45天, 标的池120, top5, fee 0.05%
-python3 backtest/short_gainers.py --days 45 --universe 120 --top 5 --hours 6 --fee 0.0005
-```
-
-输出 `backtest/results.json` 与 `frontend/data.js`（含净值曲线、逐周期持仓与盈亏归因、汇总指标）。
-
-> ⚠️ 仅供研究演示，非投资建议。未计滑点 / 借币费 / 爆仓；等权 1x 无杠杆。
-> 实测结论：naive「追空涨幅榜」在加密市场是**负 edge**——做空暴涨币等于逆动量，强趋势下被持续碾压。
-
-## 3. 可视化 `frontend/index.html`
-
-直接用浏览器打开（`data.js` 经 `<script>` 内联，无需起服务器）：
-
-```bash
-open frontend/index.html      # macOS
-```
-
-含：核心指标卡、净值曲线、盈亏拆解（价格/资金费/手续费累计）、以及可**播放/拖动逐周期**的交易过程回放。
-
-## 部署（首尔服务器，git pull）
-
-数据抓取需直连 Binance，跑在首尔腾讯云。服务器目录 `~/crypto-quant` git 跟踪 `origin/main`，用**只读 deploy key** 认证：
-
-```bash
-# 本地改完代码: git add -A && git commit -m "..." && git push   (github-personal → Zhang-Shubo)
-ssh -i ~/Documents/tecent_seoul.pem ubuntu@43.164.191.143
-cd ~/crypto-quant && git pull --ff-only
-python3 backtest/short_gainers.py        # 重新抓数+回测, 刷新 results.json / data.js
-```
-
-详见服务器笔记《首尔腾讯云服务器》的「已部署:crypto-quant」一节。
-
-## 环境
-
-脚本仅依赖 Python 标准库，无需安装第三方包（`requirements.txt` 为后续扩展预留）。
+⚠️ 仅供研究演示，非投资建议。回测未计滑点/借币费/爆仓，等权 1x；单一历史窗口，高收益大概率
+含 regime 偏差。朴素「追空涨幅榜」实测为**负 edge**。实盘风险自负，真金前务必在 testnet 充分验证。

@@ -7,16 +7,7 @@
 <link rel="stylesheet" href="./app.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  :root{
-    --bg:#0a0e14; --panel:#111722; --panel2:#0d1320; --line:#1e2937;
-    --txt:#d6e0ee; --dim:#7d8aa0; --accent:#3fb6ff;
-    --up:#22c55e; --down:#ef4444; --gold:#f5b94a; --violet:#a78bfa;
-    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
-    -webkit-font-smoothing:antialiased;line-height:1.5}
+  /* 基础变量/排版见 app.css; 这里只放本页特有样式 */
   .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 60px}
   header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
   h1{font-size:22px;font-weight:650;margin:0;letter-spacing:.2px}
@@ -109,7 +100,7 @@ fetch('./runs/manifest.json')
   })
   .catch(()=>{
     document.querySelector('.wrap').innerHTML =
-      `<div class="err">还没有回测结果。<br/>在服务器跑 <code>python3 backtest/short_gainers.py --batch</code> 生成 runs/ 后刷新。</div>`;
+      `<div class="err">还没有回测结果。<br/>在服务器跑 <code>python3 -m cryptoquant.backtest --batch</code> 生成 runs/ 后刷新。</div>`;
   });
 
 function renderAll(){
@@ -141,7 +132,7 @@ function renderAll(){
   }).join('');
 
   document.getElementById('foot').innerHTML =
-    `数据: Binance USDT 永续 (首尔直连)。每个策略=方向×止损止盈参数，由 <code>backtest/short_gainers.py --batch</code> 生成 <code>runs/&lt;id&gt;.json</code> + <code>manifest.json</code>。点策略行进入回放明细。`;
+    `数据: Binance USDT 永续 (首尔直连)。每个策略=方向×止损止盈参数，由 <code>python3 -m cryptoquant.backtest --batch</code> 生成 <code>runs/&lt;id&gt;.json</code> + <code>manifest.json</code>。点策略行进入回放明细。`;
 
   drawChart();
 }

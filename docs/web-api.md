@@ -29,6 +29,7 @@ python3 -m cryptoquant.web        # 或: make serve
 | `MON_MIN_QVOL` | 1000000 | 标的最小 24h 成交额 |
 | `MON_UNIVERSE` | 150 | 1h 榜刷新的标的池大小 |
 | `SAMPLE_SEC` | 60 | 浮盈采样周期（秒） |
+| `MON_REBALANCE_SEC` | 21600 | 滚动调仓周期（秒，默认 6h）；到点重新选币开新快照，上一批到点平仓并入累计已实现；设 `0` 则冻结不调仓 |
 
 ```bash
 MON_SIDE=short MON_CAPITAL=500 APP_PORT=9000 python3 -m cryptoquant.web
@@ -80,17 +81,22 @@ MON_SIDE=short MON_CAPITAL=500 APP_PORT=9000 python3 -m cryptoquant.web
             "positions": [ { "symbol","entry","qty","sl","tp","chg24",
                              "closed","exit","reason","exit_ts" }, ... ] },
   "prices": { "XUSDT": 1.23, ... },          // 实时标记价
-  "summary": { "total_pnl", "total_notional", "hit" },
-  "snapshot_id": 1, "sample_sec": 60, "now": 1782... }
+  // summary: 本轮(当前快照) total_pnl/total_notional/hit + 账户级累计
+  //   realized_cum=历次清仓/调仓已实现; cum_pnl=realized_cum+本轮浮盈;
+  //   equity=initial_capital+cum_pnl(实时总额)
+  "summary": { "total_pnl", "total_notional", "hit",
+               "realized_cum", "cum_pnl", "equity", "initial_capital" },
+  "snapshot_id": 1, "sample_sec": 60,
+  "next_rebalance": 1782..., "rebalance_sec": 21600, "now": 1782... }
 ```
 
 ### `GET /api/monitor/history`
 
-当前快照的浮盈采样序列（来自 SQLite，重启后保留）。
+连续账户权益（实时总额）采样序列，跨所有快照按时间排序（来自 SQLite，最多最近 5000 点，重启后保留）。
 
 ```jsonc
-{ "snapshot_id": 1, "frozen_at": 1782...,
-  "samples": [ { "ts", "total_pnl", "total_notional", "hit" }, ... ] }
+{ "snapshot_id": 1, "frozen_at": 1782..., "initial_capital": 100,
+  "samples": [ { "ts", "total_pnl", "hit", "equity" }, ... ] }
 ```
 
 ### 静态文件
@@ -109,5 +115,5 @@ MON_SIDE=short MON_CAPITAL=500 APP_PORT=9000 python3 -m cryptoquant.web
 
 ## 存储
 
-`data/live.db`（SQLite）两张表：`snapshots`（冻结的持仓计划）、`samples`（逐次浮盈采样）。
-已 gitignore；删除即重置历史。
+`data/live.db`（SQLite）三张表：`snapshots`（每次调仓冻结的持仓计划）、`samples`（逐次采样，含 `equity` 账户权益列）、`account`（账户级 `initial_capital` / `realized_cum` 累计已实现，单行 `id=1`）。
+已 gitignore；删除即重置历史与累计。

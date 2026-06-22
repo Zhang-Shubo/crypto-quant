@@ -45,7 +45,7 @@
   <div class="summary" id="summary" style="margin-top:16px"></div>
 
   <div class="panel">
-    <h2>浮盈历史 (持久化 · SQLite 采样)</h2>
+    <h2>实时总额历史 · 账户权益 (持久化 · SQLite 采样)</h2>
     <div class="chartbox"><canvas id="pnlChart"></canvas></div>
   </div>
 
@@ -72,16 +72,21 @@ function renderMonitor(st){
     ? `质量池(上市≥${P.quality_age_months}月·成交额>${(P.quality_vol/1e4).toFixed(0)}万)`
     : '涨幅榜';
   document.getElementById('h1').textContent=`实时策略运行 · ${sideCn}${poolTxt}`;
+  const rebalTxt = st.next_rebalance
+    ? ` · 下次调仓 ${hhmmss(st.next_rebalance)}`
+    : ' · 冻结不调仓';
   document.getElementById('sub').textContent=
-    `${sideCn} top${P.top} · ${poolTxt} · 止损${(P.sl*100).toFixed(0)}% · 止盈${(P.tp*100).toFixed(0)}% · 每仓${fmt(P.notional_each)}U · 冻结于 ${P.frozen_at?hhmmss(P.frozen_at):'—'} · 快照#${st.snapshot_id||'—'}`;
+    `${sideCn} top${P.top} · ${poolTxt} · 止损${(P.sl*100).toFixed(0)}% · 止盈${(P.tp*100).toFixed(0)}% · 每仓${fmt(P.notional_each)}U · 冻结于 ${P.frozen_at?hhmmss(P.frozen_at):'—'} · 快照#${st.snapshot_id||'—'}${rebalTxt}`;
   document.getElementById('upd').textContent='更新 '+hhmmss(st.now);
 
-  const s=st.summary||{total_pnl:0,total_notional:0,hit:0};
+  const s=st.summary||{};
+  const cap=s.initial_capital||0, cum=s.cum_pnl||0, eq=s.equity||cap, ret=cap?cum/cap*100:0;
   document.getElementById('summary').innerHTML=
-    `<div class="scard"><div class="k">投入名义</div><div class="v">${fmt(s.total_notional)} U</div></div>`+
-    `<div class="scard"><div class="k">合计浮盈</div><div class="v ${s.total_pnl>=0?'pos':'neg'}">${sign(s.total_pnl)} U</div></div>`+
-    `<div class="scard"><div class="k">浮盈率</div><div class="v ${s.total_pnl>=0?'pos':'neg'}">${sign(s.total_notional?s.total_pnl/s.total_notional*100:0)}%</div></div>`+
-    `<div class="scard"><div class="k">已平仓</div><div class="v">${s.hit} / ${P.positions.length}</div></div>`;
+    `<div class="scard"><div class="k">起始本金</div><div class="v">${fmt(cap)} U</div></div>`+
+    `<div class="scard"><div class="k">实时总额</div><div class="v ${cum>=0?'pos':'neg'}">${fmt(eq)} U</div></div>`+
+    `<div class="scard"><div class="k">累计盈亏 (含已清仓)</div><div class="v ${cum>=0?'pos':'neg'}">${sign(cum)} U</div></div>`+
+    `<div class="scard"><div class="k">累计收益率</div><div class="v ${cum>=0?'pos':'neg'}">${sign(ret)}%</div></div>`+
+    `<div class="scard"><div class="k">本轮已平仓</div><div class="v">${s.hit} / ${P.positions.length}</div></div>`;
 
   document.getElementById('list').innerHTML=P.positions.map(p=>{
     const closed=p.closed, cur=px[p.symbol];
@@ -126,19 +131,19 @@ async function loadHistory(){
   let h;
   try{ h=await (await fetch('./api/monitor/history',{cache:'no-store'})).json(); }catch(e){ return; }
   const s=h.samples||[];
-  const labels=s.map(x=>hm(x.ts)), data=s.map(x=>x.total_pnl);
+  const labels=s.map(x=>hm(x.ts)), data=s.map(x=>x.equity);
   if(!chart){
     Chart.defaults.color='#7d8aa0';
     chart=new Chart(document.getElementById('pnlChart'),{
       type:'line',
-      data:{labels,datasets:[{label:'浮盈U',data,borderColor:'#3fb6ff',borderWidth:1.6,pointRadius:0,
+      data:{labels,datasets:[{label:'实时总额U',data,borderColor:'#3fb6ff',borderWidth:1.6,pointRadius:0,
         fill:true,tension:.15,
         backgroundColor:ctx=>{const g=ctx.chart.ctx.createLinearGradient(0,0,0,220);
           g.addColorStop(0,'rgba(63,182,255,.20)');g.addColorStop(1,'rgba(63,182,255,0)');return g;}}]},
       options:{responsive:true,maintainAspectRatio:false,animation:false,
-        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' 浮盈 '+sign(c.parsed.y)+' U'}}},
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>' 总额 '+fmt(c.parsed.y)+' U'}}},
         scales:{x:{grid:{color:'#1a2230'},ticks:{maxTicksLimit:10,autoSkip:true}},
-          y:{grid:{color:'#1a2230'},ticks:{callback:v=>(v>=0?'+':'')+Number(v).toFixed(2)}}}}
+          y:{grid:{color:'#1a2230'},ticks:{callback:v=>Number(v).toFixed(1)}}}}
     });
   }else{
     chart.data.labels=labels; chart.data.datasets[0].data=data; chart.update();
@@ -146,7 +151,7 @@ async function loadHistory(){
 }
 
 document.getElementById('foot').innerHTML=
-  '⚠️ <b>dry-run</b>: 入场/止损/止盈为服务冻结快照, 现价为实时标记价。浮盈每隔采样周期写入 <b>SQLite (data/live.db)</b>, 重启后历史保留。<b>不下任何单</b>。';
+  '⚠️ <b>dry-run</b>: 入场/止损/止盈为服务冻结快照, 现价为实时标记价。每 6h <b>滚动调仓</b>(重新选币开新快照), 调仓时上一批到点平仓、盈亏并入<b>累计已实现</b>; 止盈/止损清仓同样累计。<b>实时总额 = 起始本金 + 累计盈亏</b>, 每隔采样周期写入 <b>SQLite (data/live.db)</b>, 重启后保留。<b>不下任何单</b>。';
 
 tickMonitor(); loadHistory();
 setInterval(tickMonitor,3000);
